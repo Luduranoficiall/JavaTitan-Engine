@@ -1,9 +1,13 @@
 # JavaTitan Engine
 
-Motor financeiro em Java com API HTTP minimalista, processamento assíncrono e validação de acesso baseada em JWT (simplificada). O projeto foca em arquitetura enxuta, precisão com `BigDecimal` e padrões modernos (records, streams, strategy, async com `CompletableFuture`).
+Motor financeiro em Java, orientado a API HTTP, com processamento assíncrono, validação de acesso por JWT (simplificada), regras de negócio por plano e observabilidade via logs estruturados. O foco é clareza arquitetural, precisão com `BigDecimal` e uso de padrões modernos (records, streams, strategy e async com `CompletableFuture`).
 
-## Visao geral
-O JavaTitan Engine expõe um endpoint de calculo financeiro que recebe uma proposta, valida acesso por plano, processa de forma assíncrona e retorna o valor liquido com taxa aplicada. O sistema inclui logger estruturado, regras de negocio por plano e um DAO em memoria para demonstrar persistencia.
+## Destaques tecnicos
+- Pipeline HTTP enxuto com `HttpServer` nativo e handlers dedicados.
+- Processamento assíncrono com `CompletableFuture` e pool dedicado.
+- Validação de acesso baseada em claim `plan` no JWT (Base64URL).
+- Domínio forte via `Plano` (enum com taxas e validação centralizada).
+- Parsing manual de JSON com utilitário próprio (`JsonUtils`) para manter dependências zero.
 
 ## Arquitetura (alto nivel)
 
@@ -11,28 +15,31 @@ O JavaTitan Engine expõe um endpoint de calculo financeiro que recebe uma propo
 Cliente HTTP
   |  POST /api/calcular  (Bearer JWT)
   v
-HttpServer (Java nativo)
+HttpServer
   |-- CalculoHandler
-        |-- valida Authorization (Bearer)
-        |-- parse JSON (regex)
-        |-- valida plano no JWT
-        |-- MotorFinanceiroEspecialista (async)
-        |-- OrcamentoDAO (memoria)
-        v
-   Response JSON
+      |-- valida Authorization
+      |-- parse JSON (JsonUtils)
+      |-- valida plano (ValidadorSeguranca)
+      |-- MotorFinanceiroEspecialista (async)
+      |-- OrcamentoDAO (memoria)
+      v
+   JSON response
 ```
 
-## Componentes principais
-- `MotorFinanceiro.java`: servidor HTTP, handlers, pipeline de validacao e processamento assincrono.
-- `MotorFinanceiroEspecialista` (interno): calculo do valor liquido por plano, com simulacao de carga.
-- `LoggerSaaS.java`: logger estruturado com timestamp e nivel.
-- `MotorRegrasElite.java`: motor de regras com Strategy Pattern (Map de funcoes).
-- `ProcessadorLote.java`: processamento em lote com Streams.
-- `ValidadorSeguranca.java`: validador de JWT (standalone). O `MotorFinanceiro` possui sua propria versao interna para a API.
+### Fluxo de processamento (sequencia simplificada)
+
+```
+Request -> Handler -> Validacao -> Async Calc -> Persistencia -> Response
+```
+
+## Modelo de dominio
+- `Plano`: enum com taxa (`STARTER`, `PRO`, `VIP`).
+- `PropostaRequest`: idCliente, valorBruto, plano.
+- `PropostaResponse`: idProposta, valorLiquido, taxaAplicada, status.
 
 ## API HTTP
 ### `POST /api/calcular`
-Calcula proposta com base em plano e valor bruto.
+Calcula proposta financeira.
 
 **Headers**
 - `Authorization: Bearer <token>` (obrigatorio)
@@ -58,12 +65,13 @@ Calcula proposta com base em plano e valor bruto.
 ```
 
 **Erros comuns**
-- `401`: Authorization ausente ou malformado.
+- `401`: Authorization ausente ou token vazio.
 - `403`: token invalido ou plano insuficiente.
-- `500`: erro de parsing ou falha interna.
+- `400`: JSON invalido ou plano desconhecido.
+- `500`: falha interna.
 
 ### `GET /health`
-Health check simples.
+Health check.
 
 **Resposta 200**
 ```json
@@ -71,29 +79,29 @@ Health check simples.
 ```
 
 ## Seguranca (JWT simplificado)
-- O token e esperado no formato `Bearer header.payload.assinatura`.
-- O payload e decodificado via Base64 e deve conter a claim `"plan":"<PLANO>"`.
-- O plano do token deve bater com o `plano` enviado na requisicao.
+- Espera `Bearer header.payload.assinatura`.
+- O payload e decodificado via Base64URL (com padding corrigido quando necessario).
+- A claim esperada e `"plan":"<PLANO>"`.
+- A assinatura **nao** e validada neste projeto (demo).
 
 **Exemplo de token para plano PRO**
 ```
 Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiZGVtbyIsInBsYW4iOiJQUk8ifQ==.assinatura_fake
 ```
 
-## Regras de negocio (taxas)
-No endpoint `/api/calcular`:
-- `STARTER` = 6%
-- `PRO` = 15%
-- default = 0%
+## Regras de negocio
+- Taxas centralizadas em `Plano`.
+- `MotorFinanceiroEspecialista` calcula `valorLiquido = valorBruto - (valorBruto * taxa)`.
+- `MotorRegrasElite` demonstra Strategy Pattern com as mesmas taxas.
 
-No `MotorRegrasElite` (demo de Strategy Pattern):
-- `VIP` = 2%
-- `STARTER` = 10%
-- `PRO` = 5%
+## Concorrencia e performance
+- `HttpServer` usa pool dedicado para requests.
+- O calculo roda em pool separado (evita bloquear threads de entrada).
+- `OrcamentoDAO` usa `CopyOnWriteArrayList` para segurança de acesso concorrente.
 
 ## Execucao local
 **Requisitos**
-- JDK 17+ (records e switch expressions).
+- JDK 17+ (records e switch/modern features).
 
 **Compilar**
 ```bash
@@ -118,45 +126,48 @@ curl -i -X POST http://localhost:8080/api/calcular \
   -d '{"idCliente":"e7f6b1c6-9cb0-4c1a-9c76-2a9bf3b2a1c1","valorBruto":1000.00,"plano":"PRO"}'
 ```
 
-## Modos de demonstracao
-**Motor de Regras (Strategy Pattern)**
+## Demonstracoes
+**Strategy Pattern (Regras)**
 ```bash
 java MotorRegrasElite
 ```
 
-**Processamento em Lote (Streams)**
+**Processamento em lote**
 ```bash
 java ProcessadorLote
 ```
 
-**Logger**
+**Logger estruturado**
 ```bash
 java LoggerSaaS
 ```
 
 ## Observabilidade
-- Logs estruturados via `LoggerSaaS` com timestamp e nivel.
-- Logs de seguranca e de pipeline assincrono sao emitidos no console.
-
-## Limitacoes atuais (conscientes)
-- Parsing de JSON via regex (nao cobre JSON complexo).
-- Validacao de JWT e simples (sem assinatura real ou exp).
-- Persistencia em memoria (lista em `OrcamentoDAO`).
-- Sem TLS/HTTPS e sem rate limiting.
-
-## Roadmap sugerido
-- Trocar parsing por Jackson/Gson.
-- Implementar DAO com banco (PostgreSQL, H2 ou SQLite).
-- Validar JWT com assinatura e expiracao.
-- Observabilidade com metrics e tracing.
-- Testes automatizados (unit e integration).
+- Logs estruturados com timestamp e nivel.
+- Eventos de seguranca e pipeline assincrono logados.
 
 ## Estrutura do projeto
 ```
 JavaTitan-Engine/
+  .gitignore
+  JsonUtils.java
   LoggerSaaS.java
   MotorFinanceiro.java
   MotorRegrasElite.java
+  Plano.java
   ProcessadorLote.java
   ValidadorSeguranca.java
 ```
+
+## Limitações conscientes
+- Parsing manual de JSON (nao cobre JSON complexo).
+- Sem validacao de assinatura JWT.
+- Persistencia apenas em memoria.
+- Sem TLS, rate limiting ou observabilidade com metrics/tracing.
+
+## Roadmap sugerido
+- Adicionar Jackson/Gson para parsing.
+- Validar JWT com assinatura e exp.
+- DAO com banco real (PostgreSQL/H2).
+- Metrics (Micrometer) e tracing (OpenTelemetry).
+- Testes unitarios e integracao (JUnit + Testcontainers).
