@@ -28,9 +28,25 @@ public final class JsonUtils {
         if (raw == null) {
             throw new IllegalArgumentException("Campo obrigatorio: " + key);
         }
+        return parseBigDecimal(raw, key);
+    }
+
+    public static BigDecimal readBigDecimal(String json, String key) {
+        String raw = readNumber(json, key);
+        if (raw == null) {
+            return null;
+        }
+        return parseBigDecimal(raw, key);
+    }
+
+    public static Long readOptionalLong(String json, String key) {
+        String raw = readNumber(json, key);
+        if (raw == null) {
+            return null;
+        }
         try {
-            return new BigDecimal(raw);
-        } catch (NumberFormatException ex) {
+            return new BigDecimal(raw).longValueExact();
+        } catch (ArithmeticException | NumberFormatException ex) {
             throw new IllegalArgumentException("Valor invalido para " + key + ": " + raw);
         }
     }
@@ -64,5 +80,13 @@ public final class JsonUtils {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t");
+    }
+
+    private static BigDecimal parseBigDecimal(String raw, String key) {
+        try {
+            return new BigDecimal(raw);
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("Valor invalido para " + key + ": " + raw);
+        }
     }
 }

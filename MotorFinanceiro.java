@@ -9,11 +9,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -62,6 +61,23 @@ public class MotorFinanceiro {
     private static final String CONTENT_TYPE_JSON = "application/json; charset=UTF-8";
 
     public static void main(String[] args) throws IOException {
+        JwtConfig jwtConfig;
+        try {
+            jwtConfig = JwtConfig.fromEnv();
+        } catch (IllegalStateException ex) {
+            LoggerSaaS.log("ERROR", "[CONFIG] " + ex.getMessage());
+            return;
+        }
+
+        DbConfig dbConfig = DbConfig.fromEnv();
+        OrcamentoRepository repository;
+        try {
+            repository = criarRepositorio(dbConfig);
+        } catch (IllegalStateException ex) {
+            LoggerSaaS.log("ERROR", "[DB] " + ex.getMessage());
+            return;
+        }
+
         int httpThreads = Math.max(4, Runtime.getRuntime().availableProcessors());
         int workerThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
 
@@ -71,7 +87,8 @@ public class MotorFinanceiro {
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
         server.createContext(CONTEXT_CALCULO, new CalculoHandler(
             new MotorFinanceiroEspecialista(workerExecutor),
-            new OrcamentoDAO()
+            repository,
+            jwtConfig
         ));
         server.createContext(CONTEXT_HEALTH, new HealthCheckHandler());
         server.setExecutor(httpExecutor);
@@ -84,7 +101,16 @@ public class MotorFinanceiro {
             server.stop(1);
             httpExecutor.shutdown();
             workerExecutor.shutdown();
+            repository.close();
         }));
+    }
+
+    private static OrcamentoRepository criarRepositorio(DbConfig config) {
+        if (config == null || !config.isEnabled()) {
+            LoggerSaaS.log("WARN", "[DB] JAVATITAN_DB_URL nao definido. Usando memoria.");
+            return new InMemoryOrcamentoRepository();
+        }
+        return new JdbcOrcamentoRepository(config);
     }
 
     static class HealthCheckHandler implements HttpHandler {
@@ -106,11 +132,13 @@ public class MotorFinanceiro {
 
     static class CalculoHandler implements HttpHandler {
         private final MotorFinanceiroEspecialista motor;
-        private final OrcamentoDAO dao;
+        private final OrcamentoRepository repository;
+        private final JwtConfig jwtConfig;
 
-        CalculoHandler(MotorFinanceiroEspecialista motor, OrcamentoDAO dao) {
+        CalculoHandler(MotorFinanceiroEspecialista motor, OrcamentoRepository repository, JwtConfig jwtConfig) {
             this.motor = motor;
-            this.dao = dao;
+            this.repository = repository;
+            this.jwtConfig = jwtConfig;
         }
 
         @Override
@@ -141,19 +169,34 @@ public class MotorFinanceiro {
 
                 PropostaRequest request = parseRequest(jsonPayload);
 
-                if (!ValidadorSeguranca.validarAcesso(token, request.plano())) {
-                    LoggerSaaS.log("WARN", "Acesso negado: token invalido ou plano insuficiente.");
+                if (!ValidadorSeguranca.validarAcesso(token, request.plano(), jwtConfig)) {
                     enviarResposta(exchange, 403, jsonErro("Acesso negado: token invalido ou plano insuficiente"));
                     return;
                 }
 
                 motor.processarAsync(request).thenAccept(response -> {
                     try {
-                        LoggerSaaS.log("SUCCESS", "Calculo finalizado para ID: " + response.idProposta());
-                        dao.persistir("ID: " + response.idProposta() + " | Valor: " + response.valorLiquido());
+                        Orcamento orcamento = new Orcamento(
+                            response.idProposta(),
+                            request.idCliente(),
+                            request.plano(),
+                            request.valorBruto(),
+                            response.taxaAplicada(),
+                            response.valorLiquido(),
+                            response.status(),
+                            Instant.now()
+                        );
+                        repository.salvar(orcamento);
                         enviarResposta(exchange, 200, jsonSucesso(response));
-                    } catch (IOException e) {
-                        LoggerSaaS.log("ERROR", "Falha ao enviar resposta: " + e.getMessage());
+                    } catch (RuntimeException ex) {
+                        LoggerSaaS.log("ERROR", "Falha ao persistir: " + ex.getMessage());
+                        try {
+                            enviarResposta(exchange, 500, jsonErro("Falha ao persistir"));
+                        } catch (IOException e) {
+                            LoggerSaaS.log("ERROR", "Falha ao enviar erro: " + e.getMessage());
+                        }
+                    } catch (IOException ex) {
+                        LoggerSaaS.log("ERROR", "Falha ao enviar resposta: " + ex.getMessage());
                     }
                 }).exceptionally(ex -> {
                     Throwable causa = (ex instanceof CompletionException && ex.getCause() != null)
@@ -200,15 +243,6 @@ public class MotorFinanceiro {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(responseBytes);
             }
-        }
-    }
-
-    static class OrcamentoDAO {
-        private final List<String> tabelaOrcamentos = new CopyOnWriteArrayList<>();
-
-        public void persistir(String dadosOrcamento) {
-            tabelaOrcamentos.add(dadosOrcamento);
-            LoggerSaaS.log("INFO", "[DB-JAVA] Registro financeiro arquivado: " + dadosOrcamento);
         }
     }
 }

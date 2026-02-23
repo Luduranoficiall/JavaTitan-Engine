@@ -1,6 +1,11 @@
 *.class
 *.log
+*.db
+*.sqlite
+*.mv.db
+*.trace.db
 /out/
 /target/
 /bin/
+/data/
 .DS_Store
