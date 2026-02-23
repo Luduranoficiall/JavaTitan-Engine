@@ -1,3 +1,5 @@
+package com.javatitan.engine;
+
 import java.math.BigDecimal;
 
 public enum Plano {
@@ -17,7 +19,7 @@ public enum Plano {
 
     public static Plano from(String raw) {
         if (raw == null || raw.isBlank()) {
-            throw new IllegalArgumentException("Plano e obrigatorio.");
+            throw new IllegalArgumentException("Plano obrigatorio.");
         }
         try {
             return Plano.valueOf(raw.trim().toUpperCase());

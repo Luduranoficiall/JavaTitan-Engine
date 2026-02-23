@@ -1,3 +1,5 @@
+package com.javatitan.engine;
+
 public record DbConfig(String url, String user, String password, String driver) {
     public static DbConfig fromEnv() {
         String url = normalize(env("JAVATITAN_DB_URL"));

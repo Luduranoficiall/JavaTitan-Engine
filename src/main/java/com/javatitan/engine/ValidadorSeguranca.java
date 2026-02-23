@@ -1,3 +1,5 @@
+package com.javatitan.engine;
+
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
@@ -57,7 +59,7 @@ public class ValidadorSeguranca {
             return ValidationResult.erro("claim plan ausente");
         }
 
-        return ValidationResult.ok(plan);
+        return ValidationResult.ok(plan.trim());
     }
 
     private static boolean validarClaims(String payloadJson, JwtConfig config) {
@@ -67,7 +69,8 @@ public class ValidadorSeguranca {
                 return false;
             }
             long now = Instant.now().getEpochSecond();
-            if (exp <= now) {
+            long skew = Math.max(0, config.clockSkewSeconds());
+            if (exp + skew <= now) {
                 return false;
             }
         }

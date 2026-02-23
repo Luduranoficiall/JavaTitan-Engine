@@ -1,3 +1,5 @@
+package com.javatitan.engine;
+
 import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.regex.Matcher;

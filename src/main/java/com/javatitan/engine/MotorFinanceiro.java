@@ -1,10 +1,11 @@
+package com.javatitan.engine;
+
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetSocketAddress;
@@ -27,9 +28,9 @@ class MotorFinanceiroEspecialista {
         this.executor = executor;
     }
 
-    public CompletableFuture<PropostaResponse> processarAsync(PropostaRequest request) {
+    public CompletableFuture<PropostaResponse> processarAsync(PropostaRequest request, String requestId) {
         return CompletableFuture.supplyAsync(() -> {
-            LoggerSaaS.log("INFO", "[JAVA-THREAD] Iniciando calculo para cliente: " + request.idCliente());
+            LoggerSaaS.log("INFO", requestId, "Iniciando calculo para cliente: " + request.idCliente());
             simularCarga();
 
             if (request.valorBruto().signum() < 0) {
@@ -55,16 +56,22 @@ class MotorFinanceiroEspecialista {
 }
 
 public class MotorFinanceiro {
-    private static final int PORT = 8080;
     private static final String CONTEXT_CALCULO = "/api/calcular";
     private static final String CONTEXT_HEALTH = "/health";
-    private static final String CONTENT_TYPE_JSON = "application/json; charset=UTF-8";
 
     public static void main(String[] args) throws IOException {
+        AppConfig appConfig;
+        try {
+            appConfig = AppConfig.fromEnv();
+        } catch (IllegalArgumentException ex) {
+            LoggerSaaS.log("ERROR", "[CONFIG] " + ex.getMessage());
+            return;
+        }
+
         JwtConfig jwtConfig;
         try {
             jwtConfig = JwtConfig.fromEnv();
-        } catch (IllegalStateException ex) {
+        } catch (IllegalStateException | IllegalArgumentException ex) {
             LoggerSaaS.log("ERROR", "[CONFIG] " + ex.getMessage());
             return;
         }
@@ -78,13 +85,10 @@ public class MotorFinanceiro {
             return;
         }
 
-        int httpThreads = Math.max(4, Runtime.getRuntime().availableProcessors());
-        int workerThreads = Math.max(2, Runtime.getRuntime().availableProcessors());
+        ExecutorService httpExecutor = Executors.newFixedThreadPool(appConfig.httpThreads());
+        ExecutorService workerExecutor = Executors.newFixedThreadPool(appConfig.workerThreads());
 
-        ExecutorService httpExecutor = Executors.newFixedThreadPool(httpThreads);
-        ExecutorService workerExecutor = Executors.newFixedThreadPool(workerThreads);
-
-        HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress(appConfig.port()), 0);
         server.createContext(CONTEXT_CALCULO, new CalculoHandler(
             new MotorFinanceiroEspecialista(workerExecutor),
             repository,
@@ -94,7 +98,7 @@ public class MotorFinanceiro {
         server.setExecutor(httpExecutor);
         server.start();
 
-        LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Servidor iniciado na porta " + PORT + ".");
+        LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Servidor iniciado na porta " + appConfig.port() + ".");
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Encerrando servidor...");
@@ -117,16 +121,12 @@ public class MotorFinanceiro {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1);
+                HttpResponses.sendJson(exchange, 405, HttpResponses.errorJson(405, "Metodo nao permitido", null), null);
                 return;
             }
-            String response = "{\"status\":\"UP\"}";
-            exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
-            byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, responseBytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
-            }
+            String requestId = requestId(exchange);
+            String response = "{\"status\":\"UP\",\"timestamp\":\"" + Instant.now().toString() + "\"}";
+            HttpResponses.sendJson(exchange, 200, response, requestId);
         }
     }
 
@@ -143,38 +143,40 @@ public class MotorFinanceiro {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            String requestId = requestId(exchange);
+
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                enviarResposta(exchange, 405, jsonErro("Metodo nao permitido"));
+                HttpResponses.sendJson(exchange, 405, HttpResponses.errorJson(405, "Metodo nao permitido", requestId), requestId);
                 return;
             }
 
             String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
             if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                LoggerSaaS.log("WARN", "Acesso negado: Header Authorization ausente ou malformado.");
-                enviarResposta(exchange, 401, jsonErro("Header Authorization Bearer e obrigatorio"));
+                LoggerSaaS.log("WARN", requestId, "Authorization ausente ou malformado.");
+                HttpResponses.sendJson(exchange, 401, HttpResponses.errorJson(401, "Authorization Bearer obrigatorio", requestId), requestId);
                 return;
             }
             String token = authHeader.substring(7).trim();
             if (token.isEmpty()) {
-                enviarResposta(exchange, 401, jsonErro("Token Bearer vazio"));
+                HttpResponses.sendJson(exchange, 401, HttpResponses.errorJson(401, "Token Bearer vazio", requestId), requestId);
                 return;
             }
 
             try (InputStream is = exchange.getRequestBody()) {
                 String jsonPayload = new String(is.readAllBytes(), StandardCharsets.UTF_8).trim();
                 if (jsonPayload.isEmpty()) {
-                    enviarResposta(exchange, 400, jsonErro("Body vazio"));
+                    HttpResponses.sendJson(exchange, 400, HttpResponses.errorJson(400, "Body vazio", requestId), requestId);
                     return;
                 }
 
                 PropostaRequest request = parseRequest(jsonPayload);
 
                 if (!ValidadorSeguranca.validarAcesso(token, request.plano(), jwtConfig)) {
-                    enviarResposta(exchange, 403, jsonErro("Acesso negado: token invalido ou plano insuficiente"));
+                    HttpResponses.sendJson(exchange, 403, HttpResponses.errorJson(403, "Acesso negado", requestId), requestId);
                     return;
                 }
 
-                motor.processarAsync(request).thenAccept(response -> {
+                motor.processarAsync(request, requestId).thenAccept(response -> {
                     try {
                         Orcamento orcamento = new Orcamento(
                             response.idProposta(),
@@ -187,16 +189,16 @@ public class MotorFinanceiro {
                             Instant.now()
                         );
                         repository.salvar(orcamento);
-                        enviarResposta(exchange, 200, jsonSucesso(response));
+                        HttpResponses.sendJson(exchange, 200, jsonSucesso(response), requestId);
                     } catch (RuntimeException ex) {
-                        LoggerSaaS.log("ERROR", "Falha ao persistir: " + ex.getMessage());
+                        LoggerSaaS.log("ERROR", requestId, "Falha ao persistir: " + ex.getMessage());
                         try {
-                            enviarResposta(exchange, 500, jsonErro("Falha ao persistir"));
+                            HttpResponses.sendJson(exchange, 500, HttpResponses.errorJson(500, "Falha ao persistir", requestId), requestId);
                         } catch (IOException e) {
-                            LoggerSaaS.log("ERROR", "Falha ao enviar erro: " + e.getMessage());
+                            LoggerSaaS.log("ERROR", requestId, "Falha ao enviar erro: " + e.getMessage());
                         }
                     } catch (IOException ex) {
-                        LoggerSaaS.log("ERROR", "Falha ao enviar resposta: " + ex.getMessage());
+                        LoggerSaaS.log("ERROR", requestId, "Falha ao enviar resposta: " + ex.getMessage());
                     }
                 }).exceptionally(ex -> {
                     Throwable causa = (ex instanceof CompletionException && ex.getCause() != null)
@@ -204,16 +206,16 @@ public class MotorFinanceiro {
                         : ex;
                     int status = (causa instanceof IllegalArgumentException) ? 400 : 500;
                     try {
-                        enviarResposta(exchange, status, jsonErro(causa.getMessage()));
+                        HttpResponses.sendJson(exchange, status, HttpResponses.errorJson(status, causa.getMessage(), requestId), requestId);
                     } catch (IOException e) {
-                        LoggerSaaS.log("ERROR", "Falha ao enviar erro: " + e.getMessage());
+                        LoggerSaaS.log("ERROR", requestId, "Falha ao enviar erro: " + e.getMessage());
                     }
                     return null;
                 });
             } catch (IllegalArgumentException e) {
-                enviarResposta(exchange, 400, jsonErro(e.getMessage()));
+                HttpResponses.sendJson(exchange, 400, HttpResponses.errorJson(400, e.getMessage(), requestId), requestId);
             } catch (Exception e) {
-                enviarResposta(exchange, 500, jsonErro("Falha interna"));
+                HttpResponses.sendJson(exchange, 500, HttpResponses.errorJson(500, "Falha interna", requestId), requestId);
             }
         }
 
@@ -231,18 +233,13 @@ public class MotorFinanceiro {
                 response.idProposta(), response.valorLiquido(), response.taxaAplicada(), response.status()
             );
         }
+    }
 
-        private String jsonErro(String mensagem) {
-            return "{\"error\":\"" + JsonUtils.escapeJson(mensagem) + "\"}";
+    private static String requestId(HttpExchange exchange) {
+        String existing = exchange.getRequestHeaders().getFirst("X-Request-Id");
+        if (existing != null && !existing.isBlank()) {
+            return existing.trim();
         }
-
-        private void enviarResposta(HttpExchange exchange, int code, String response) throws IOException {
-            exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
-            byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(code, responseBytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
-            }
-        }
+        return UUID.randomUUID().toString();
     }
 }

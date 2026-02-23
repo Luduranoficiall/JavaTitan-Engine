@@ -1,13 +1,14 @@
 # JavaTitan Engine
 
-Motor financeiro em Java, com API HTTP minimalista, processamento assíncrono, validação JWT com assinatura HS256 e persistencia JDBC opcional. O projeto prioriza clareza arquitetural, precisão com `BigDecimal` e uso de padrões modernos (records, streams, strategy e async com `CompletableFuture`).
+Motor financeiro em Java com API HTTP, processamento assincrono, validacao JWT HS256 e persistencia JDBC opcional. O projeto prioriza clareza arquitetural, precisao com `BigDecimal` e padroes modernos (records, streams, strategy e async com `CompletableFuture`).
 
 ## Destaques tecnicos
 - API HTTP nativa (`HttpServer`) com handlers isolados.
-- Processamento assíncrono com pool dedicado (nao bloqueia threads de entrada).
-- JWT HS256 com validacao de assinatura, exp e claims opcionais (`iss`/`aud`).
+- Processamento assincrono com pool dedicado (nao bloqueia threads de entrada).
+- JWT HS256 com validacao de assinatura, `exp` e claims opcionais (`iss`/`aud`).
 - Dominio forte via `Plano` (enum com taxas e validacao centralizada).
 - Persistencia JDBC configuravel por variaveis de ambiente.
+- Respostas padronizadas de erro com `requestId` e timestamp.
 
 ## Arquitetura (alto nivel)
 
@@ -39,6 +40,7 @@ Calcula proposta financeira.
 **Headers**
 - `Authorization: Bearer <token>` (obrigatorio)
 - `Content-Type: application/json`
+- `X-Request-Id` (opcional; se ausente, o servidor gera)
 
 **Body**
 ```json
@@ -59,30 +61,42 @@ Calcula proposta financeira.
 }
 ```
 
-**Erros comuns**
-- `401`: Authorization ausente ou token vazio.
-- `403`: token invalido ou plano insuficiente.
-- `400`: JSON invalido ou plano desconhecido.
-- `500`: falha interna ou persistencia.
+**Resposta de erro (exemplo)**
+```json
+{
+  "status": 403,
+  "error": "Forbidden",
+  "message": "Acesso negado",
+  "requestId": "b2a1a2e1-3e1d-4f9a-9e5d-2c3f1b9e4e99",
+  "timestamp": "2025-02-23T21:10:00Z"
+}
+```
 
 ### `GET /health`
 Health check.
 
 **Resposta 200**
 ```json
-{ "status": "UP" }
+{ "status": "UP", "timestamp": "2025-02-23T21:10:00Z" }
 ```
+
+## Configuracao (APP)
+- `JAVATITAN_PORT` (default: `8080`)
+- `JAVATITAN_HTTP_THREADS` (default: `max(4, cpu)`)
+- `JAVATITAN_WORKER_THREADS` (default: `max(2, cpu)`)
 
 ## JWT (HS256)
 - Assinatura HS256 obrigatoria.
-- `exp` e obrigatorio por padrao (pode ser desligado).
-- `iss` e `aud` sao opcionais (se configurados, sao validados).
+- `exp` obrigatorio por padrao (pode ser desligado).
+- `iss` e `aud` opcionais.
+- `clock skew` configuravel.
 
 ### Variaveis de ambiente (JWT)
 - `JAVATITAN_JWT_SECRET` (obrigatorio)
 - `JAVATITAN_JWT_REQUIRE_EXP` (default: `true`)
 - `JAVATITAN_JWT_ISS` (opcional)
 - `JAVATITAN_JWT_AUD` (opcional)
+- `JAVATITAN_JWT_CLOCK_SKEW` (segundos, default: `30`)
 
 ### Gerar token valido (exemplo Python)
 ```bash
@@ -138,35 +152,29 @@ mkdir -p lib
 curl -L -o lib/h2.jar https://repo1.maven.org/maven2/com/h2database/h2/2.2.224/h2-2.2.224.jar
 ```
 
-2) Compile e execute com classpath:
+2) Compile e execute:
 ```bash
 export JAVATITAN_DB_URL="jdbc:h2:./data/javatitan"
 export JAVATITAN_DB_DRIVER="org.h2.Driver"
 export JAVATITAN_JWT_SECRET="super-secret"
 
-javac -cp lib/h2.jar *.java
-java -cp .:lib/h2.jar MotorFinanceiro
+javac -cp lib/h2.jar -d out $(find src/main/java -name "*.java")
+java -cp out:lib/h2.jar com.javatitan.engine.MotorFinanceiro
 ```
 
-## Regras de negocio
-- Taxas centralizadas em `Plano`.
-- `MotorFinanceiroEspecialista` calcula `valorLiquido = valorBruto - (valorBruto * taxa)`.
-- `MotorRegrasElite` demonstra Strategy Pattern com as mesmas taxas.
+## Build e execucao (Maven)
+```bash
+mvn -q -DskipTests package
+export JAVATITAN_JWT_SECRET="super-secret"
+java -jar target/javatitan-engine-1.0.0.jar
+```
 
-## Concorrencia e performance
-- Pool dedicado para HTTP.
-- Pool separado para calculo.
-- Persistencia isolada em repositorio (JDBC ou memoria).
-
-## Execucao local (sem DB)
-**Requisitos**
-- JDK 17+.
-
+## Build e execucao (javac)
 ```bash
 export JAVATITAN_JWT_SECRET="super-secret"
 
-javac *.java
-java MotorFinanceiro
+javac -d out $(find src/main/java -name "*.java")
+java -cp out com.javatitan.engine.MotorFinanceiro
 ```
 
 ## Testes rapidos
@@ -184,46 +192,46 @@ curl -i -X POST http://localhost:8080/api/calcular \
 ## Demonstracoes
 **Strategy Pattern (Regras)**
 ```bash
-java MotorRegrasElite
+java -cp out com.javatitan.engine.MotorRegrasElite
 ```
 
 **Processamento em lote**
 ```bash
-java ProcessadorLote
-```
-
-**Logger estruturado**
-```bash
-java LoggerSaaS
+java -cp out com.javatitan.engine.ProcessadorLote
 ```
 
 ## Estrutura do projeto
 ```
 JavaTitan-Engine/
+  pom.xml
+  README.md
   .gitignore
-  DbConfig.java
-  InMemoryOrcamentoRepository.java
-  JdbcOrcamentoRepository.java
-  JsonUtils.java
-  JwtConfig.java
-  LoggerSaaS.java
-  MotorFinanceiro.java
-  MotorRegrasElite.java
-  Orcamento.java
-  OrcamentoRepository.java
-  Plano.java
-  ProcessadorLote.java
-  ValidadorSeguranca.java
+  src/main/java/com/javatitan/engine/
+    AppConfig.java
+    DbConfig.java
+    HttpResponses.java
+    InMemoryOrcamentoRepository.java
+    JdbcOrcamentoRepository.java
+    JsonUtils.java
+    JwtConfig.java
+    LoggerSaaS.java
+    MotorFinanceiro.java
+    MotorRegrasElite.java
+    Orcamento.java
+    OrcamentoRepository.java
+    Plano.java
+    ProcessadorLote.java
+    ValidadorSeguranca.java
 ```
 
 ## Limitacoes conscientes
 - Parsing manual de JSON.
-- Valida apenas `aud` como string simples.
+- Valida `aud` como string simples.
 - Persistencia depende de driver JDBC externo.
 
 ## Roadmap sugerido
 - JSON parsing com Jackson/Gson.
 - JWT com JWKs e rotacao de chaves.
-- DAO com pool de conexoes.
+- Pool de conexoes JDBC.
 - Observabilidade com metrics/tracing.
 - Testes automatizados (JUnit + Testcontainers).
