@@ -177,6 +177,11 @@ javac -d out $(find src/main/java -name "*.java")
 java -cp out com.javatitan.engine.MotorFinanceiro
 ```
 
+## Script rapido (build + run + teste)
+```bash
+./run.sh
+```
+
 ## Testes rapidos
 ```bash
 curl -i http://localhost:8080/health
