@@ -21,9 +21,10 @@ public class TccSmokeTest {
         CryptoConfig cryptoConfig = CryptoConfig.fromEnv();
         ClientTlsConfig tlsConfig = ClientTlsConfig.fromEnv(TlsConfig.fromEnv());
 
-        SmokeReport report = run(baseUrl, token.trim(), cryptoConfig, tlsConfig);
+        SmokeReport report = runReport(baseUrl, token.trim(), cryptoConfig, tlsConfig);
         report.print();
         report.writeIfConfigured();
+        report.writeCsvIfConfigured();
 
         if (!report.passed()) {
             System.exit(1);
@@ -31,6 +32,14 @@ public class TccSmokeTest {
     }
 
     public static SmokeReport run(String baseUrl, String token, CryptoConfig cryptoConfig, ClientTlsConfig tlsConfig) throws Exception {
+        return runInternal(baseUrl, token, cryptoConfig, tlsConfig, true);
+    }
+
+    public static SmokeReport runReport(String baseUrl, String token, CryptoConfig cryptoConfig, ClientTlsConfig tlsConfig) throws Exception {
+        return runInternal(baseUrl, token, cryptoConfig, tlsConfig, false);
+    }
+
+    private static SmokeReport runInternal(String baseUrl, String token, CryptoConfig cryptoConfig, ClientTlsConfig tlsConfig, boolean throwOnError) throws Exception {
         long start = System.currentTimeMillis();
         HttpClient client = HttpClientFactory.create(tlsConfig);
 
@@ -42,7 +51,9 @@ public class TccSmokeTest {
         } catch (Exception ex) {
             report.setPassed(false);
             report.setError(ex.getMessage());
-            throw ex;
+            if (throwOnError) {
+                throw ex;
+            }
         } finally {
             report.setDurationMs(System.currentTimeMillis() - start);
         }
@@ -186,6 +197,20 @@ public class TccSmokeTest {
             java.nio.file.Files.writeString(reportPath, toJson());
         }
 
+        void writeCsvIfConfigured() throws Exception {
+            String path = System.getenv("JAVATITAN_SMOKE_REPORT_CSV");
+            if (path == null || path.isBlank()) {
+                return;
+            }
+            java.nio.file.Path reportPath = java.nio.file.Path.of(path);
+            java.nio.file.Path parent = reportPath.getParent();
+            if (parent != null) {
+                java.nio.file.Files.createDirectories(parent);
+            }
+            String csv = toCsvHeader() + System.lineSeparator() + toCsvRow();
+            java.nio.file.Files.writeString(reportPath, csv);
+        }
+
         String toJson() {
             String timestamp = Instant.now().toString();
             return "{" +
@@ -198,6 +223,29 @@ public class TccSmokeTest {
                 "\"error\":\"" + JsonUtils.escapeJson(error == null ? "" : error) + "\"," +
                 "\"timestamp\":\"" + timestamp + "\"" +
                 "}";
+        }
+
+        String toCsvHeader() {
+            return "timestamp,passed,secureMode,baseUrl,durationMs,checks,error";
+        }
+
+        String toCsvRow() {
+            String timestamp = Instant.now().toString();
+            return String.join(",",
+                csv(timestamp),
+                csv(String.valueOf(passed)),
+                csv(String.valueOf(secureMode)),
+                csv(baseUrl),
+                csv(String.valueOf(durationMs)),
+                csv(checks.toString()),
+                csv(error == null ? "" : error)
+            );
+        }
+
+        private String csv(String value) {
+            String v = value == null ? "" : value;
+            String escaped = v.replace("\"", "\"\"");
+            return "\"" + escaped + "\"";
         }
     }
 }

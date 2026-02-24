@@ -110,11 +110,13 @@ javac -d out $(find src/main/java -name "*.java")
 java -cp out com.javatitan.engine.AesKeyGenerator
 ```
 
-Gerar keystore/truststore (Java puro, sem keytool):
+Gerar keystore/truststore (Java puro, sem keytool manual):
 ```bash
 javac -d out $(find src/main/java -name "*.java")
 java -cp out com.javatitan.engine.KeystoreGenerator --mtls
 ```
+
+Observacao: o gerador usa o binario `keytool` da JVM via Java (sem shell manual).
 
 ## Persistencia JDBC
 A persistencia e habilitada quando `JAVATITAN_DB_URL` esta definida. Caso contrario, o motor usa memoria.
@@ -159,6 +161,16 @@ export JAVATITAN_SMOKE_REPORT_PATH="reports/tcc-smoke.json"
 java -cp out com.javatitan.engine.TccRunner --smoke-test
 ```
 
+### TccReportGenerator (JSON + CSV)
+```bash
+java -cp out com.javatitan.engine.TccReportGenerator --out-dir=reports --name=tcc-final
+```
+
+### OneClickRunner (AES + keystore + servidor + smoke test)
+```bash
+java -cp out com.javatitan.engine.OneClickRunner
+```
+
 ## Estrutura do projeto
 ```
 JavaTitan-Engine/
@@ -177,14 +189,17 @@ JavaTitan-Engine/
     JdbcOrcamentoRepository.java
     JsonUtils.java
     JwtConfig.java
+    KeystoreGenerator.java
     LoggerSaaS.java
     MotorFinanceiro.java
     MotorRegrasElite.java
+    OneClickRunner.java
     Orcamento.java
     OrcamentoRepository.java
     Plano.java
     ProcessadorLote.java
     TestClient.java
+    TccReportGenerator.java
     TccRunner.java
     TccSmokeTest.java
     TlsConfig.java
