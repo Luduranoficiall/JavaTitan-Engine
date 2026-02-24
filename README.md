@@ -106,8 +106,14 @@ Cliente (para testes Java):
 
 Gerar chave AES (Java puro):
 ```bash
-javac -d out $(find src/main/java -name "*.java")
+javac --add-exports java.base/sun.security.x509=ALL-UNNAMED --add-exports java.base/sun.security.tools.keytool=ALL-UNNAMED -d out $(find src/main/java -name "*.java")
 java -cp out com.javatitan.engine.AesKeyGenerator
+```
+
+Gerar keystore/truststore (Java puro, sem keytool):
+```bash
+javac --add-exports java.base/sun.security.x509=ALL-UNNAMED --add-exports java.base/sun.security.tools.keytool=ALL-UNNAMED -d out $(find src/main/java -name "*.java")
+java --add-exports java.base/sun.security.x509=ALL-UNNAMED --add-exports java.base/sun.security.tools.keytool=ALL-UNNAMED -cp out com.javatitan.engine.KeystoreGenerator --mtls
 ```
 
 ## Persistencia JDBC
@@ -122,7 +128,7 @@ A persistencia e habilitada quando `JAVATITAN_DB_URL` esta definida. Caso contra
 ## Execucao (Java puro)
 Compilar:
 ```bash
-javac -d out $(find src/main/java -name "*.java")
+javac --add-exports java.base/sun.security.x509=ALL-UNNAMED --add-exports java.base/sun.security.tools.keytool=ALL-UNNAMED -d out $(find src/main/java -name "*.java")
 ```
 
 ### Subir o servidor (TLS + AES)

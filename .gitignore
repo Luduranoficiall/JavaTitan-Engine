@@ -6,11 +6,15 @@
 *.trace.db
 *.jks
 *.p12
+*.pem
+*.crt
+*.cer
 /out/
 /target/
 /bin/
 /data/
 /reports/
+/security/
 /.idea/
 /.vscode/
 *.iml
