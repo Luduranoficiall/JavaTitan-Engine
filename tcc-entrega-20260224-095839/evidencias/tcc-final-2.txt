@@ -1,8 +1,0 @@
-TCC Smoke Test Report
-Timestamp: 2026-02-24T11:23:14.428472829Z
-Passed: true
-Secure Mode: true
-Base URL: https://localhost:8090
-Duration (ms): 2052
-Checks: health:ok;calculo:ok
-Error: -

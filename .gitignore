@@ -16,9 +16,9 @@
 /data/
 /reports/
 /security/
- /tcc-entrega-*/
- /tcc-entrega-*.zip
- /tcc-entrega-*.tar.gz
+/tcc-entrega-*/
+/tcc-entrega-*.zip
+/tcc-entrega-*.tar.gz
 /.idea/
 /.vscode/
 *.iml
