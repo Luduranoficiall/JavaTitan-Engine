@@ -9,12 +9,16 @@
 *.pem
 *.crt
 *.cer
+.env.tcc
 /out/
 /target/
 /bin/
 /data/
 /reports/
 /security/
+ /tcc-entrega-*/
+ /tcc-entrega-*.zip
+ /tcc-entrega-*.tar.gz
 /.idea/
 /.vscode/
 *.iml

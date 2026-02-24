@@ -34,6 +34,8 @@ public class OneClickRunner {
         Path clientKeystore = securityDir.resolve("client-keystore" + extension);
         Path clientTruststore = securityDir.resolve("client-truststore" + extension);
 
+        writeEnvFile(options.envPath(), appConfig, jwtConfig, jwtSecret, options, aesKeyBase64, serverKeystore, serverTruststore, clientKeystore, clientTruststore);
+
         TlsConfig tlsConfig = new TlsConfig(true,
             serverKeystore.toString(),
             password,
@@ -66,16 +68,20 @@ public class OneClickRunner {
             Files.createDirectories(options.reportDir());
             Path jsonPath = options.reportDir().resolve(options.reportName() + ".json");
             Path csvPath = options.reportDir().resolve(options.reportName() + ".csv");
+            Path txtPath = options.reportDir().resolve(options.reportName() + ".txt");
             Files.writeString(jsonPath, report.toJson());
             Files.writeString(csvPath, report.toCsvHeader() + System.lineSeparator() + report.toCsvRow());
+            Files.writeString(txtPath, report.toTxtSummary());
 
             System.out.println("AES_KEY_BASE64=" + aesKeyBase64);
             System.out.println("Server keystore: " + serverKeystore);
             System.out.println("Server truststore: " + serverTruststore);
             System.out.println("Client keystore: " + clientKeystore);
             System.out.println("Client truststore: " + clientTruststore);
+            System.out.println("Env file: " + options.envPath().toAbsolutePath());
             System.out.println("Report JSON: " + jsonPath.toAbsolutePath());
             System.out.println("Report CSV: " + csvPath.toAbsolutePath());
+            System.out.println("Report TXT: " + txtPath.toAbsolutePath());
 
             if (!report.passed()) {
                 System.exit(1);
@@ -106,10 +112,73 @@ public class OneClickRunner {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private record Options(Path securityDir, Path reportDir, String reportName, String storeType, String password, int aesKeySize, String plan, long ttlSeconds, boolean keepRunning) {
+    private static void writeEnvFile(Path envPath, AppConfig appConfig, JwtConfig jwtConfig, String jwtSecret, Options options, String aesKeyBase64,
+                                    Path serverKeystore, Path serverTruststore, Path clientKeystore, Path clientTruststore) throws Exception {
+        java.nio.file.Path target = envPath.toAbsolutePath().normalize();
+        java.nio.file.Path parent = target.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("# Gerado pelo OneClickRunner (nao commitar)").append(System.lineSeparator());
+        appendEnv(sb, "JAVATITAN_PORT", String.valueOf(appConfig.port()));
+        appendEnv(sb, "JAVATITAN_ALLOW_PLAIN", "false");
+        appendEnv(sb, "JAVATITAN_MAX_BODY_KB", String.valueOf(Math.max(1, appConfig.maxBodyBytes() / 1024)));
+        appendEnv(sb, "JAVATITAN_PROCESS_TIMEOUT_MS", String.valueOf(appConfig.processingTimeoutMs()));
+        appendEnv(sb, "JAVATITAN_RATE_LIMIT_PER_MIN", String.valueOf(appConfig.rateLimitPerMinute()));
+        appendEnv(sb, "JAVATITAN_METRICS_ENABLED", String.valueOf(appConfig.metricsEnabled()));
+        appendEnv(sb, "JAVATITAN_SECURE_MODE", "true");
+        appendEnv(sb, "JAVATITAN_AES_KEY", aesKeyBase64);
+        appendEnv(sb, "JAVATITAN_JWT_SECRET", jwtSecret);
+        if (jwtConfig.issuer() != null) {
+            appendEnv(sb, "JAVATITAN_JWT_ISS", jwtConfig.issuer());
+        }
+        if (jwtConfig.audience() != null) {
+            appendEnv(sb, "JAVATITAN_JWT_AUD", jwtConfig.audience());
+        }
+        appendEnv(sb, "JAVATITAN_JWT_PLAN", options.plan());
+        appendEnv(sb, "JAVATITAN_JWT_TTL", String.valueOf(options.ttlSeconds()));
+
+        appendEnv(sb, "JAVATITAN_TLS_REQUIRE_CLIENT_AUTH", "true");
+        appendEnv(sb, "JAVATITAN_TLS_KEYSTORE_PATH", normalizePath(serverKeystore));
+        appendEnv(sb, "JAVATITAN_TLS_KEYSTORE_PASSWORD", options.password());
+        appendEnv(sb, "JAVATITAN_TLS_KEYSTORE_TYPE", options.storeType());
+        appendEnv(sb, "JAVATITAN_TLS_TRUSTSTORE_PATH", normalizePath(serverTruststore));
+        appendEnv(sb, "JAVATITAN_TLS_TRUSTSTORE_PASSWORD", options.password());
+        appendEnv(sb, "JAVATITAN_TLS_TRUSTSTORE_TYPE", options.storeType());
+
+        appendEnv(sb, "JAVATITAN_CLIENT_KEYSTORE_PATH", normalizePath(clientKeystore));
+        appendEnv(sb, "JAVATITAN_CLIENT_KEYSTORE_PASSWORD", options.password());
+        appendEnv(sb, "JAVATITAN_CLIENT_KEYSTORE_TYPE", options.storeType());
+        appendEnv(sb, "JAVATITAN_CLIENT_TRUSTSTORE_PATH", normalizePath(clientTruststore));
+        appendEnv(sb, "JAVATITAN_CLIENT_TRUSTSTORE_PASSWORD", options.password());
+        appendEnv(sb, "JAVATITAN_CLIENT_TRUSTSTORE_TYPE", options.storeType());
+
+        Files.writeString(target, sb.toString());
+    }
+
+    private static void appendEnv(StringBuilder sb, String key, String value) {
+        if (value == null) {
+            return;
+        }
+        sb.append(key).append("=").append(escapeEnv(value)).append(System.lineSeparator());
+    }
+
+    private static String escapeEnv(String value) {
+        String escaped = value.replace("\\", "\\\\").replace("\"", "\\\"");
+        return "\"" + escaped + "\"";
+    }
+
+    private static String normalizePath(Path path) {
+        return path.toAbsolutePath().normalize().toString();
+    }
+
+    private record Options(Path securityDir, Path reportDir, Path envPath, String reportName, String storeType, String password, int aesKeySize, String plan, long ttlSeconds, boolean keepRunning) {
         static Options parse(String[] args) {
             Path securityDir = Path.of("security");
             Path reportDir = Path.of("reports");
+            Path envPath = Path.of(".env.tcc");
             String reportName = "tcc-oneclick";
             String storeType = "JKS";
             String password = envOrDefault("JAVATITAN_KEYSTORE_PASSWORD", "changeit");
@@ -123,6 +192,8 @@ public class OneClickRunner {
                     securityDir = Path.of(arg.substring("--security-dir=".length()));
                 } else if (arg.startsWith("--report-dir=")) {
                     reportDir = Path.of(arg.substring("--report-dir=".length()));
+                } else if (arg.startsWith("--env-path=")) {
+                    envPath = Path.of(arg.substring("--env-path=".length()));
                 } else if (arg.startsWith("--report-name=")) {
                     reportName = arg.substring("--report-name=".length());
                 } else if (arg.startsWith("--store-type=")) {
@@ -142,7 +213,7 @@ public class OneClickRunner {
                 }
             }
 
-            return new Options(securityDir, reportDir, reportName, storeType, password, aesKeySize, plan, ttl, keepRunning);
+            return new Options(securityDir, reportDir, envPath, reportName, storeType, password, aesKeySize, plan, ttl, keepRunning);
         }
 
         private static int parseInt(String name, String value) {
@@ -165,6 +236,7 @@ public class OneClickRunner {
             System.out.println("OneClickRunner (TCC)");
             System.out.println("  --security-dir=DIR   Diretorio de keystores (default security)");
             System.out.println("  --report-dir=DIR     Diretorio de relatorios (default reports)");
+            System.out.println("  --env-path=ARQUIVO   Caminho do .env.tcc (default .env.tcc)");
             System.out.println("  --report-name=NOME   Nome base do relatorio (default tcc-oneclick)");
             System.out.println("  --store-type=JKS     Tipo de keystore (JKS|PKCS12)");
             System.out.println("  --password=PASS      Senha do keystore (default changeit)");

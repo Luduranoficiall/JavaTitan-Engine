@@ -47,6 +47,9 @@ public class TccSmokeTest {
         try {
             validarHealth(client, baseUrl, report);
             validarCalculo(client, baseUrl, token, cryptoConfig, report);
+            if (envBool("JAVATITAN_SMOKE_CHECK_METRICS", false) && envBool("JAVATITAN_METRICS_ENABLED", true)) {
+                validarMetrics(client, baseUrl, report);
+            }
             report.setPassed(true);
         } catch (Exception ex) {
             report.setPassed(false);
@@ -129,6 +132,23 @@ public class TccSmokeTest {
         report.addCheck("calculo", "ok");
     }
 
+    private static void validarMetrics(HttpClient client, String baseUrl, SmokeReport report) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + "/metrics"))
+            .GET()
+            .timeout(Duration.ofSeconds(3))
+            .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        assertStatus(response.statusCode(), 200, "metrics status", report);
+
+        Long total = JsonUtils.readOptionalLong(response.body(), "totalRequests");
+        if (total == null || total < 0) {
+            throw new IllegalStateException("metrics totalRequests invalido");
+        }
+        report.addCheck("metrics", "ok");
+    }
+
     private static void assertStatus(int actual, int expected, String label, SmokeReport report) {
         if (actual != expected) {
             report.addCheck(label, "status " + actual);
@@ -142,6 +162,15 @@ public class TccSmokeTest {
             return defaultValue;
         }
         return value.trim();
+    }
+
+    private static boolean envBool(String name, boolean defaultValue) {
+        String value = System.getenv(name);
+        if (value == null) {
+            return defaultValue;
+        }
+        String normalized = value.trim().toLowerCase();
+        return normalized.equals("true") || normalized.equals("1") || normalized.equals("yes");
     }
 
     public static class SmokeReport {
@@ -240,6 +269,20 @@ public class TccSmokeTest {
                 csv(checks.toString()),
                 csv(error == null ? "" : error)
             );
+        }
+
+        String toTxtSummary() {
+            String timestamp = Instant.now().toString();
+            StringBuilder sb = new StringBuilder();
+            sb.append("TCC Smoke Test Report").append(System.lineSeparator());
+            sb.append("Timestamp: ").append(timestamp).append(System.lineSeparator());
+            sb.append("Passed: ").append(passed).append(System.lineSeparator());
+            sb.append("Secure Mode: ").append(secureMode).append(System.lineSeparator());
+            sb.append("Base URL: ").append(baseUrl).append(System.lineSeparator());
+            sb.append("Duration (ms): ").append(durationMs).append(System.lineSeparator());
+            sb.append("Checks: ").append(checks.length() == 0 ? "-" : checks).append(System.lineSeparator());
+            sb.append("Error: ").append(error == null || error.isBlank() ? "-" : error).append(System.lineSeparator());
+            return sb.toString();
         }
 
         private String csv(String value) {

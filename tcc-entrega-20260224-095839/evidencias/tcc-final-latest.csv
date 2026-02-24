@@ -1,0 +1,2 @@
+timestamp,passed,secureMode,baseUrl,durationMs,checks,error
+"2026-02-24T12:58:21.551201687Z","true","true","https://localhost:8090","4506","health:ok;calculo:ok",""

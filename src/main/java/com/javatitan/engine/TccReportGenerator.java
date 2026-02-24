@@ -25,13 +25,16 @@ public class TccReportGenerator {
         Files.createDirectories(options.outDir());
         Path jsonPath = options.outDir().resolve(options.name() + ".json");
         Path csvPath = options.outDir().resolve(options.name() + ".csv");
+        Path txtPath = options.outDir().resolve(options.name() + ".txt");
 
         Files.writeString(jsonPath, report.toJson());
         String csv = report.toCsvHeader() + System.lineSeparator() + report.toCsvRow();
         Files.writeString(csvPath, csv);
+        Files.writeString(txtPath, report.toTxtSummary());
 
         System.out.println("JSON: " + jsonPath.toAbsolutePath());
         System.out.println("CSV: " + csvPath.toAbsolutePath());
+        System.out.println("TXT: " + txtPath.toAbsolutePath());
 
         if (!report.passed()) {
             System.exit(1);

@@ -5,7 +5,11 @@ public record AppConfig(
     int httpThreads,
     int workerThreads,
     long simulatedDelayMs,
-    boolean allowPlainWhenSecure
+    boolean allowPlainWhenSecure,
+    int maxBodyBytes,
+    long processingTimeoutMs,
+    int rateLimitPerMinute,
+    boolean metricsEnabled
 ) {
     public static AppConfig fromEnv() {
         int port = envInt("JAVATITAN_PORT", 8080, 1, 65535);
@@ -13,7 +17,12 @@ public record AppConfig(
         int workerThreads = envInt("JAVATITAN_WORKER_THREADS", Math.max(2, Runtime.getRuntime().availableProcessors()), 1, 512);
         long delayMs = envLong("JAVATITAN_SIMULATED_DELAY_MS", 0L, 0L, 60000L);
         boolean allowPlain = envBool("JAVATITAN_ALLOW_PLAIN", false);
-        return new AppConfig(port, httpThreads, workerThreads, delayMs, allowPlain);
+        int maxBodyKb = envInt("JAVATITAN_MAX_BODY_KB", 64, 1, 10240);
+        int maxBodyBytes = Math.multiplyExact(maxBodyKb, 1024);
+        long processingTimeout = envLong("JAVATITAN_PROCESS_TIMEOUT_MS", 12000L, 0L, 600000L);
+        int rateLimit = envInt("JAVATITAN_RATE_LIMIT_PER_MIN", 120, 0, 100000);
+        boolean metricsEnabled = envBool("JAVATITAN_METRICS_ENABLED", true);
+        return new AppConfig(port, httpThreads, workerThreads, delayMs, allowPlain, maxBodyBytes, processingTimeout, rateLimit, metricsEnabled);
     }
 
     private static int envInt(String name, int defaultValue, int min, int max) {

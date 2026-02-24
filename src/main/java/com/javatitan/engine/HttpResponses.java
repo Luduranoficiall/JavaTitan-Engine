@@ -14,6 +14,7 @@ public final class HttpResponses {
 
     public static void sendJson(HttpExchange exchange, int status, String json, String requestId) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_JSON);
+        applySecurityHeaders(exchange);
         if (requestId != null) {
             exchange.getResponseHeaders().set("X-Request-Id", requestId);
         }
@@ -51,8 +52,20 @@ public final class HttpResponses {
             case 403 -> "Forbidden";
             case 404 -> "Not Found";
             case 405 -> "Method Not Allowed";
+            case 413 -> "Payload Too Large";
+            case 415 -> "Unsupported Media Type";
+            case 429 -> "Too Many Requests";
+            case 504 -> "Gateway Timeout";
             case 500 -> "Internal Server Error";
             default -> "Error";
         };
+    }
+
+    private static void applySecurityHeaders(HttpExchange exchange) {
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.getResponseHeaders().set("X-Frame-Options", "DENY");
+        exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store, no-cache, must-revalidate");
+        exchange.getResponseHeaders().set("Pragma", "no-cache");
     }
 }

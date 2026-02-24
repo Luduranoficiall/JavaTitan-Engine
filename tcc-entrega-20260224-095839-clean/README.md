@@ -72,11 +72,6 @@ Metricas basicas para evidencias do TCC. Disponivel somente para `localhost`.
 - `JAVATITAN_RATE_LIMIT_PER_MIN` (default: `120`, `0` desativa)
 - `JAVATITAN_METRICS_ENABLED` (default: `true`)
 
-## Arquivos de ambiente
-- `.env.tcc` gerado pelo OneClickRunner (nao commitar).
-- `.env.tcc.example` template sem segredos.
-- `env.example` com variaveis organizadas por secao.
-
 ## JWT (HS256)
 - Assinatura HS256 obrigatoria.
 - `exp` obrigatorio por padrao (pode ser desligado).
@@ -205,8 +200,6 @@ Use o arquivo `TCC_CHECKLIST.md` para acompanhar entregas e evidencias.
 JavaTitan-Engine/
   README.md
   TCC_CHECKLIST.md
-  .env.tcc.example
-  env.example
   .gitignore
   src/main/java/com/javatitan/engine/
     AesKeyGenerator.java
