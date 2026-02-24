@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 
 public class TccSmokeTest {
@@ -17,20 +18,38 @@ public class TccSmokeTest {
             System.exit(1);
         }
 
-        run(baseUrl, token.trim());
-        System.out.println("[SMOKE] OK");
+        CryptoConfig cryptoConfig = CryptoConfig.fromEnv();
+        ClientTlsConfig tlsConfig = ClientTlsConfig.fromEnv(TlsConfig.fromEnv());
+
+        SmokeReport report = run(baseUrl, token.trim(), cryptoConfig, tlsConfig);
+        report.print();
+        report.writeIfConfigured();
+
+        if (!report.passed()) {
+            System.exit(1);
+        }
     }
 
-    public static void run(String baseUrl, String token) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+    public static SmokeReport run(String baseUrl, String token, CryptoConfig cryptoConfig, ClientTlsConfig tlsConfig) throws Exception {
+        long start = System.currentTimeMillis();
+        HttpClient client = HttpClientFactory.create(tlsConfig);
 
-        validarHealth(client, baseUrl);
-        validarCalculo(client, baseUrl, token);
+        SmokeReport report = new SmokeReport(baseUrl, cryptoConfig != null && cryptoConfig.secureMode());
+        try {
+            validarHealth(client, baseUrl, report);
+            validarCalculo(client, baseUrl, token, cryptoConfig, report);
+            report.setPassed(true);
+        } catch (Exception ex) {
+            report.setPassed(false);
+            report.setError(ex.getMessage());
+            throw ex;
+        } finally {
+            report.setDurationMs(System.currentTimeMillis() - start);
+        }
+        return report;
     }
 
-    private static void validarHealth(HttpClient client, String baseUrl) throws Exception {
+    private static void validarHealth(HttpClient client, String baseUrl, SmokeReport report) throws Exception {
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + "/health"))
             .GET()
@@ -38,36 +57,51 @@ public class TccSmokeTest {
             .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        assertStatus(response.statusCode(), 200, "health status");
+        assertStatus(response.statusCode(), 200, "health status", report);
 
         String status = JsonUtils.readString(response.body(), "status");
         if (!"UP".equalsIgnoreCase(status)) {
             throw new IllegalStateException("health status invalido: " + status);
         }
+        report.addCheck("health", "ok");
     }
 
-    private static void validarCalculo(HttpClient client, String baseUrl, String token) throws Exception {
+    private static void validarCalculo(HttpClient client, String baseUrl, String token, CryptoConfig cryptoConfig, SmokeReport report) throws Exception {
         String payload = "{\"idCliente\":\"e7f6b1c6-9cb0-4c1a-9c76-2a9bf3b2a1c1\"," +
             "\"valorBruto\":1000.00,\"plano\":\"PRO\"}";
 
+        String path = "/api/calcular";
+        String body = payload;
+
+        if (cryptoConfig != null && cryptoConfig.secureMode()) {
+            path = "/api/calcular-secure";
+            CryptoUtils.EncryptedPayload encrypted = CryptoUtils.encrypt(payload, cryptoConfig.aesKey());
+            body = CryptoUtils.writePayload(encrypted);
+        }
+
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(baseUrl + "/api/calcular"))
+            .uri(URI.create(baseUrl + path))
             .timeout(Duration.ofSeconds(10))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + token)
-            .POST(HttpRequest.BodyPublishers.ofString(payload))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        assertStatus(response.statusCode(), 200, "calcular status");
+        assertStatus(response.statusCode(), 200, "calcular status", report);
 
-        String body = response.body();
-        String idProposta = JsonUtils.readRequiredString(body, "idProposta");
+        String bodyResponse = response.body();
+        if (cryptoConfig != null && cryptoConfig.secureMode()) {
+            CryptoUtils.EncryptedPayload encrypted = CryptoUtils.readPayload(bodyResponse);
+            bodyResponse = CryptoUtils.decrypt(encrypted, cryptoConfig.aesKey());
+        }
+
+        String idProposta = JsonUtils.readRequiredString(bodyResponse, "idProposta");
         UUID.fromString(idProposta);
 
-        BigDecimal valorLiquido = JsonUtils.readRequiredBigDecimal(body, "valorLiquido");
-        BigDecimal taxaAplicada = JsonUtils.readRequiredBigDecimal(body, "taxaAplicada");
-        String status = JsonUtils.readRequiredString(body, "status");
+        BigDecimal valorLiquido = JsonUtils.readRequiredBigDecimal(bodyResponse, "valorLiquido");
+        BigDecimal taxaAplicada = JsonUtils.readRequiredBigDecimal(bodyResponse, "taxaAplicada");
+        String status = JsonUtils.readRequiredString(bodyResponse, "status");
 
         if (!"PROCESSADO_ASYNC".equalsIgnoreCase(status)) {
             throw new IllegalStateException("status inesperado: " + status);
@@ -81,10 +115,12 @@ public class TccSmokeTest {
         if (valorLiquido.compareTo(esperadoLiquido) != 0) {
             throw new IllegalStateException("valorLiquido inesperado: " + valorLiquido);
         }
+        report.addCheck("calculo", "ok");
     }
 
-    private static void assertStatus(int actual, int expected, String label) {
+    private static void assertStatus(int actual, int expected, String label, SmokeReport report) {
         if (actual != expected) {
+            report.addCheck(label, "status " + actual);
             throw new IllegalStateException(label + " esperado " + expected + " mas veio " + actual);
         }
     }
@@ -95,5 +131,73 @@ public class TccSmokeTest {
             return defaultValue;
         }
         return value.trim();
+    }
+
+    public static class SmokeReport {
+        private final String baseUrl;
+        private final boolean secureMode;
+        private boolean passed;
+        private long durationMs;
+        private String error;
+        private final StringBuilder checks = new StringBuilder();
+
+        SmokeReport(String baseUrl, boolean secureMode) {
+            this.baseUrl = baseUrl;
+            this.secureMode = secureMode;
+        }
+
+        void addCheck(String name, String status) {
+            if (checks.length() > 0) {
+                checks.append(";");
+            }
+            checks.append(name).append(":").append(status);
+        }
+
+        void setPassed(boolean passed) {
+            this.passed = passed;
+        }
+
+        void setDurationMs(long durationMs) {
+            this.durationMs = durationMs;
+        }
+
+        void setError(String error) {
+            this.error = error;
+        }
+
+        boolean passed() {
+            return passed;
+        }
+
+        void print() {
+            System.out.println(toJson());
+        }
+
+        void writeIfConfigured() throws Exception {
+            String path = System.getenv("JAVATITAN_SMOKE_REPORT_PATH");
+            if (path == null || path.isBlank()) {
+                return;
+            }
+            java.nio.file.Path reportPath = java.nio.file.Path.of(path);
+            java.nio.file.Path parent = reportPath.getParent();
+            if (parent != null) {
+                java.nio.file.Files.createDirectories(parent);
+            }
+            java.nio.file.Files.writeString(reportPath, toJson());
+        }
+
+        String toJson() {
+            String timestamp = Instant.now().toString();
+            return "{" +
+                "\"tcc\":true," +
+                "\"passed\":" + passed + "," +
+                "\"secureMode\":" + secureMode + "," +
+                "\"baseUrl\":\"" + JsonUtils.escapeJson(baseUrl) + "\"," +
+                "\"durationMs\":" + durationMs + "," +
+                "\"checks\":\"" + JsonUtils.escapeJson(checks.toString()) + "\"," +
+                "\"error\":\"" + JsonUtils.escapeJson(error == null ? "" : error) + "\"," +
+                "\"timestamp\":\"" + timestamp + "\"" +
+                "}";
+        }
     }
 }

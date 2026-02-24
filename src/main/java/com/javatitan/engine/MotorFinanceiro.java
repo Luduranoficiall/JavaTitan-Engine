@@ -3,7 +3,10 @@ package com.javatitan.engine;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 
+import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -23,9 +26,11 @@ record PropostaResponse(UUID idProposta, BigDecimal valorLiquido, BigDecimal tax
 
 class MotorFinanceiroEspecialista {
     private final ExecutorService executor;
+    private final long delayMs;
 
-    MotorFinanceiroEspecialista(ExecutorService executor) {
+    MotorFinanceiroEspecialista(ExecutorService executor, long delayMs) {
         this.executor = executor;
+        this.delayMs = delayMs;
     }
 
     public CompletableFuture<PropostaResponse> processarAsync(PropostaRequest request, String requestId) {
@@ -46,8 +51,11 @@ class MotorFinanceiroEspecialista {
     }
 
     private void simularCarga() {
+        if (delayMs <= 0) {
+            return;
+        }
         try {
-            Thread.sleep(2000);
+            Thread.sleep(delayMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Processamento interrompido.", e);
@@ -57,6 +65,7 @@ class MotorFinanceiroEspecialista {
 
 public class MotorFinanceiro {
     private static final String CONTEXT_CALCULO = "/api/calcular";
+    private static final String CONTEXT_CALCULO_SECURE = "/api/calcular-secure";
     private static final String CONTEXT_HEALTH = "/health";
 
     public static void main(String[] args) throws IOException {
@@ -76,10 +85,31 @@ public class MotorFinanceiro {
             return;
         }
 
+        CryptoConfig cryptoConfig;
+        try {
+            cryptoConfig = CryptoConfig.fromEnv();
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            LoggerSaaS.log("ERROR", "[CRYPTO] " + ex.getMessage());
+            return;
+        }
+
+        TlsConfig tlsConfig;
+        try {
+            tlsConfig = TlsConfig.fromEnv();
+        } catch (IllegalStateException ex) {
+            LoggerSaaS.log("ERROR", "[TLS] " + ex.getMessage());
+            return;
+        }
+
+        if (cryptoConfig.secureMode() && !tlsConfig.enabled()) {
+            LoggerSaaS.log("ERROR", "[TLS] Secure mode exige TLS habilitado.");
+            return;
+        }
+
         DbConfig dbConfig = DbConfig.fromEnv();
         ServerHandle handle;
         try {
-            handle = startServer(appConfig, jwtConfig, dbConfig);
+            handle = startServer(appConfig, jwtConfig, dbConfig, cryptoConfig, tlsConfig);
         } catch (IllegalStateException ex) {
             LoggerSaaS.log("ERROR", "[DB] " + ex.getMessage());
             return;
@@ -90,22 +120,37 @@ public class MotorFinanceiro {
         Runtime.getRuntime().addShutdownHook(new Thread(handle::close));
     }
 
-    public static ServerHandle startServer(AppConfig appConfig, JwtConfig jwtConfig, DbConfig dbConfig) throws IOException {
+    public static ServerHandle startServer(AppConfig appConfig, JwtConfig jwtConfig, DbConfig dbConfig, CryptoConfig cryptoConfig, TlsConfig tlsConfig) throws IOException {
         OrcamentoRepository repository = criarRepositorio(dbConfig);
         ExecutorService httpExecutor = Executors.newFixedThreadPool(appConfig.httpThreads());
         ExecutorService workerExecutor = Executors.newFixedThreadPool(appConfig.workerThreads());
 
-        HttpServer server = HttpServer.create(new InetSocketAddress(appConfig.port()), 0);
-        server.createContext(CONTEXT_CALCULO, new CalculoHandler(
-            new MotorFinanceiroEspecialista(workerExecutor),
-            repository,
-            jwtConfig
-        ));
+        MotorFinanceiroEspecialista especialista = new MotorFinanceiroEspecialista(workerExecutor, appConfig.simulatedDelayMs());
+
+        HttpServer server = createServer(appConfig, tlsConfig);
+        server.createContext(CONTEXT_CALCULO, new CalculoHandler(especialista, repository, jwtConfig, cryptoConfig, false, appConfig.allowPlainWhenSecure()));
+        server.createContext(CONTEXT_CALCULO_SECURE, new CalculoHandler(especialista, repository, jwtConfig, cryptoConfig, true, appConfig.allowPlainWhenSecure()));
         server.createContext(CONTEXT_HEALTH, new HealthCheckHandler());
         server.setExecutor(httpExecutor);
         server.start();
 
         return new ServerHandle(server, httpExecutor, workerExecutor, repository);
+    }
+
+    private static HttpServer createServer(AppConfig appConfig, TlsConfig tlsConfig) throws IOException {
+        if (tlsConfig != null && tlsConfig.enabled()) {
+            SSLContext sslContext = tlsConfig.createServerContext();
+            HttpsServer server = HttpsServer.create(new InetSocketAddress(appConfig.port()), 0);
+            server.setHttpsConfigurator(new HttpsConfigurator(sslContext) {
+                @Override
+                public void configure(com.sun.net.httpserver.HttpsParameters params) {
+                    params.setNeedClientAuth(tlsConfig.requireClientAuth());
+                    params.setSSLParameters(sslContext.getDefaultSSLParameters());
+                }
+            });
+            return server;
+        }
+        return HttpServer.create(new InetSocketAddress(appConfig.port()), 0);
     }
 
     private static OrcamentoRepository criarRepositorio(DbConfig config) {
@@ -156,11 +201,17 @@ public class MotorFinanceiro {
         private final MotorFinanceiroEspecialista motor;
         private final OrcamentoRepository repository;
         private final JwtConfig jwtConfig;
+        private final CryptoConfig cryptoConfig;
+        private final boolean secureEndpoint;
+        private final boolean allowPlain;
 
-        CalculoHandler(MotorFinanceiroEspecialista motor, OrcamentoRepository repository, JwtConfig jwtConfig) {
+        CalculoHandler(MotorFinanceiroEspecialista motor, OrcamentoRepository repository, JwtConfig jwtConfig, CryptoConfig cryptoConfig, boolean secureEndpoint, boolean allowPlain) {
             this.motor = motor;
             this.repository = repository;
             this.jwtConfig = jwtConfig;
+            this.cryptoConfig = cryptoConfig;
+            this.secureEndpoint = secureEndpoint;
+            this.allowPlain = allowPlain;
         }
 
         @Override
@@ -169,6 +220,16 @@ public class MotorFinanceiro {
 
             if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 HttpResponses.sendJson(exchange, 405, HttpResponses.errorJson(405, "Metodo nao permitido", requestId), requestId);
+                return;
+            }
+
+            if (cryptoConfig != null && cryptoConfig.secureMode() && !secureEndpoint && !allowPlain) {
+                HttpResponses.sendJson(exchange, 403, HttpResponses.errorJson(403, "Use o endpoint seguro", requestId), requestId);
+                return;
+            }
+
+            if (secureEndpoint && (cryptoConfig == null || cryptoConfig.aesKey() == null)) {
+                HttpResponses.sendJson(exchange, 400, HttpResponses.errorJson(400, "Criptografia nao configurada", requestId), requestId);
                 return;
             }
 
@@ -191,7 +252,13 @@ public class MotorFinanceiro {
                     return;
                 }
 
-                PropostaRequest request = parseRequest(jsonPayload);
+                String effectivePayload = jsonPayload;
+                if (secureEndpoint) {
+                    CryptoUtils.EncryptedPayload encrypted = CryptoUtils.readPayload(jsonPayload);
+                    effectivePayload = CryptoUtils.decrypt(encrypted, cryptoConfig.aesKey());
+                }
+
+                PropostaRequest request = parseRequest(effectivePayload);
 
                 if (!ValidadorSeguranca.validarAcesso(token, request.plano(), jwtConfig)) {
                     HttpResponses.sendJson(exchange, 403, HttpResponses.errorJson(403, "Acesso negado", requestId), requestId);
@@ -211,7 +278,13 @@ public class MotorFinanceiro {
                             Instant.now()
                         );
                         repository.salvar(orcamento);
-                        HttpResponses.sendJson(exchange, 200, jsonSucesso(response), requestId);
+
+                        String jsonResponse = jsonSucesso(response);
+                        if (secureEndpoint) {
+                            CryptoUtils.EncryptedPayload encryptedResponse = CryptoUtils.encrypt(jsonResponse, cryptoConfig.aesKey());
+                            jsonResponse = CryptoUtils.writePayload(encryptedResponse);
+                        }
+                        HttpResponses.sendJson(exchange, 200, jsonResponse, requestId);
                     } catch (RuntimeException ex) {
                         LoggerSaaS.log("ERROR", requestId, "Falha ao persistir: " + ex.getMessage());
                         try {

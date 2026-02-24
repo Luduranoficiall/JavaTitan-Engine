@@ -15,16 +15,17 @@ public class TestClient {
             System.exit(1);
         }
 
-        run(baseUrl, token.trim());
+        CryptoConfig cryptoConfig = CryptoConfig.fromEnv();
+        ClientTlsConfig tlsConfig = ClientTlsConfig.fromEnv(TlsConfig.fromEnv());
+
+        run(baseUrl, token.trim(), cryptoConfig, tlsConfig);
     }
 
-    public static void run(String baseUrl, String token) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+    public static void run(String baseUrl, String token, CryptoConfig cryptoConfig, ClientTlsConfig tlsConfig) throws Exception {
+        HttpClient client = HttpClientFactory.create(tlsConfig);
 
         callHealth(client, baseUrl);
-        callCalcular(client, baseUrl, token);
+        callCalcular(client, baseUrl, token, cryptoConfig);
     }
 
     private static void callHealth(HttpClient client, String baseUrl) throws Exception {
@@ -40,22 +41,38 @@ public class TestClient {
         System.out.println(response.body());
     }
 
-    private static void callCalcular(HttpClient client, String baseUrl, String token) throws Exception {
+    private static void callCalcular(HttpClient client, String baseUrl, String token, CryptoConfig cryptoConfig) throws Exception {
         String payload = "{\"idCliente\":\"e7f6b1c6-9cb0-4c1a-9c76-2a9bf3b2a1c1\"," +
             "\"valorBruto\":1000.00,\"plano\":\"PRO\"}";
 
+        String path = "/api/calcular";
+        String body = payload;
+
+        if (cryptoConfig != null && cryptoConfig.secureMode()) {
+            path = "/api/calcular-secure";
+            CryptoUtils.EncryptedPayload encrypted = CryptoUtils.encrypt(payload, cryptoConfig.aesKey());
+            body = CryptoUtils.writePayload(encrypted);
+        }
+
         HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(baseUrl + "/api/calcular"))
+            .uri(URI.create(baseUrl + path))
             .timeout(Duration.ofSeconds(10))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + token)
-            .POST(HttpRequest.BodyPublishers.ofString(payload))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
             .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println("---- /api/calcular ----");
+        System.out.println("---- " + path + " ----");
         System.out.println("HTTP " + response.statusCode());
-        System.out.println(response.body());
+
+        if (cryptoConfig != null && cryptoConfig.secureMode() && response.statusCode() == 200) {
+            CryptoUtils.EncryptedPayload encrypted = CryptoUtils.readPayload(response.body());
+            String decrypted = CryptoUtils.decrypt(encrypted, cryptoConfig.aesKey());
+            System.out.println(decrypted);
+        } else {
+            System.out.println(response.body());
+        }
     }
 
     private static String envOrDefault(String name, String defaultValue) {

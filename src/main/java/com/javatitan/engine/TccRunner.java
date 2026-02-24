@@ -7,8 +7,14 @@ public class TccRunner {
         AppConfig appConfig = AppConfig.fromEnv();
         DbConfig dbConfig = DbConfig.fromEnv();
         JwtConfig jwtConfig = buildJwtConfig();
+        CryptoConfig cryptoConfig = CryptoConfig.fromEnv();
+        TlsConfig tlsConfig = TlsConfig.fromEnv();
 
-        MotorFinanceiro.ServerHandle handle = MotorFinanceiro.startServer(appConfig, jwtConfig, dbConfig);
+        if (cryptoConfig.secureMode() && !tlsConfig.enabled()) {
+            throw new IllegalStateException("Secure mode exige TLS habilitado.");
+        }
+
+        MotorFinanceiro.ServerHandle handle = MotorFinanceiro.startServer(appConfig, jwtConfig, dbConfig, cryptoConfig, tlsConfig);
         LoggerSaaS.log("INFO", "[TCC] Servidor iniciado para validacao.");
 
         try {
@@ -16,17 +22,20 @@ public class TccRunner {
             if (!options.noTest()) {
                 String baseUrl = options.baseUrl();
                 if (baseUrl == null || baseUrl.isBlank()) {
-                    baseUrl = "http://localhost:" + appConfig.port();
+                    String scheme = tlsConfig.enabled() ? "https" : "http";
+                    baseUrl = scheme + "://localhost:" + appConfig.port();
                 }
 
                 String plan = options.plan();
                 long ttl = options.ttlSeconds();
                 String token = TokenGenerator.generateToken(jwtConfig.secret(), plan, ttl, jwtConfig.issuer(), jwtConfig.audience());
 
+                ClientTlsConfig clientTls = ClientTlsConfig.fromEnv(tlsConfig);
+
                 if (options.smokeTest()) {
-                    TccSmokeTest.run(baseUrl, token);
+                    TccSmokeTest.run(baseUrl, token, cryptoConfig, clientTls);
                 } else {
-                    TestClient.run(baseUrl, token);
+                    TestClient.run(baseUrl, token, cryptoConfig, clientTls);
                 }
             }
 

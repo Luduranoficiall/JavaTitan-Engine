@@ -4,10 +4,13 @@
 *.sqlite
 *.mv.db
 *.trace.db
+*.jks
+*.p12
 /out/
 /target/
 /bin/
 /data/
+/reports/
 /.idea/
 /.vscode/
 *.iml
