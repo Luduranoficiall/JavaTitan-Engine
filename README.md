@@ -153,6 +153,12 @@ export JAVATITAN_JWT_SECRET="super-secret"
 java -cp out com.javatitan.engine.TccRunner
 ```
 
+### Runner TCC com Smoke Test (validacao estrita)
+```bash
+export JAVATITAN_JWT_SECRET="super-secret"
+java -cp out com.javatitan.engine.TccRunner --smoke-test
+```
+
 Com DB (JDBC):
 ```bash
 export JAVATITAN_DB_URL="jdbc:h2:./data/javatitan"

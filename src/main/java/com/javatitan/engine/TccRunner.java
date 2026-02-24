@@ -23,7 +23,11 @@ public class TccRunner {
                 long ttl = options.ttlSeconds();
                 String token = TokenGenerator.generateToken(jwtConfig.secret(), plan, ttl, jwtConfig.issuer(), jwtConfig.audience());
 
-                TestClient.run(baseUrl, token);
+                if (options.smokeTest()) {
+                    TccSmokeTest.run(baseUrl, token);
+                } else {
+                    TestClient.run(baseUrl, token);
+                }
             }
 
             if (options.keepRunning()) {
@@ -81,10 +85,11 @@ public class TccRunner {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private record RunnerOptions(boolean keepRunning, boolean noTest, String baseUrl, String plan, long ttlSeconds) {
+    private record RunnerOptions(boolean keepRunning, boolean noTest, boolean smokeTest, String baseUrl, String plan, long ttlSeconds) {
         static RunnerOptions parse(String[] args) {
             boolean keepRunning = false;
             boolean noTest = false;
+            boolean smokeTest = false;
             String baseUrl = null;
             String plan = envOrDefault("JAVATITAN_JWT_PLAN", "PRO");
             long ttl = envLong("JAVATITAN_JWT_TTL", 3600L);
@@ -100,12 +105,14 @@ public class TccRunner {
                     plan = arg.substring("--plan=".length());
                 } else if (arg.startsWith("--ttl=")) {
                     ttl = parseLongArg("--ttl", arg.substring("--ttl=".length()));
+                } else if ("--smoke-test".equals(arg)) {
+                    smokeTest = true;
                 } else if ("--help".equals(arg)) {
                     printHelpAndExit();
                 }
             }
 
-            return new RunnerOptions(keepRunning, noTest, baseUrl, plan, ttl);
+            return new RunnerOptions(keepRunning, noTest, smokeTest, baseUrl, plan, ttl);
         }
 
         private static long parseLongArg(String name, String value) {
@@ -120,6 +127,7 @@ public class TccRunner {
             System.out.println("Uso: java -cp out com.javatitan.engine.TccRunner [opcoes]");
             System.out.println("  --keep-running   Mantem o servidor ativo apos o teste");
             System.out.println("  --no-test        Nao executa o TestClient");
+            System.out.println("  --smoke-test     Executa o TccSmokeTest (validacoes estritas)");
             System.out.println("  --base-url=URL   Base URL para o TestClient");
             System.out.println("  --plan=PLANO     Plano para gerar token (default PRO)");
             System.out.println("  --ttl=SEGUNDOS   TTL do token (default 3600)");
