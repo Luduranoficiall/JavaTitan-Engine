@@ -18,17 +18,27 @@ public class TokenGenerator {
         String iss = trimOrNull(System.getenv("JAVATITAN_JWT_ISS"));
         String aud = trimOrNull(System.getenv("JAVATITAN_JWT_AUD"));
         long ttl = envLong("JAVATITAN_JWT_TTL", 3600L);
-        long exp = Instant.now().getEpochSecond() + Math.max(0, ttl);
+
+        String token = generateToken(secret, plan, ttl, iss, aud);
+        System.out.println(token);
+    }
+
+    public static String generateToken(String secret, String plan, long ttlSeconds, String iss, String aud) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException("Secret obrigatorio");
+        }
+        String safePlan = (plan == null || plan.isBlank()) ? "PRO" : plan.trim();
+        long exp = Instant.now().getEpochSecond() + Math.max(0, ttlSeconds);
 
         String headerJson = "{\"alg\":\"HS256\",\"typ\":\"JWT\"}";
-        String payloadJson = buildPayload(plan, exp, iss, aud);
+        String payloadJson = buildPayload(safePlan, exp, iss, aud);
 
         String header64 = base64Url(headerJson.getBytes(StandardCharsets.UTF_8));
         String payload64 = base64Url(payloadJson.getBytes(StandardCharsets.UTF_8));
         String message = header64 + "." + payload64;
         String signature = hmacSha256Base64Url(secret, message);
 
-        System.out.println(message + "." + signature);
+        return message + "." + signature;
     }
 
     private static String buildPayload(String plan, long exp, String iss, String aud) {

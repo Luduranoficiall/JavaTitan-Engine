@@ -15,12 +15,16 @@ public class TestClient {
             System.exit(1);
         }
 
+        run(baseUrl, token.trim());
+    }
+
+    public static void run(String baseUrl, String token) throws Exception {
         HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
 
         callHealth(client, baseUrl);
-        callCalcular(client, baseUrl, token.trim());
+        callCalcular(client, baseUrl, token);
     }
 
     private static void callHealth(HttpClient client, String baseUrl) throws Exception {

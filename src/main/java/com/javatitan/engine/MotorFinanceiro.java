@@ -77,14 +77,21 @@ public class MotorFinanceiro {
         }
 
         DbConfig dbConfig = DbConfig.fromEnv();
-        OrcamentoRepository repository;
+        ServerHandle handle;
         try {
-            repository = criarRepositorio(dbConfig);
+            handle = startServer(appConfig, jwtConfig, dbConfig);
         } catch (IllegalStateException ex) {
             LoggerSaaS.log("ERROR", "[DB] " + ex.getMessage());
             return;
         }
 
+        LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Servidor iniciado na porta " + appConfig.port() + ".");
+
+        Runtime.getRuntime().addShutdownHook(new Thread(handle::close));
+    }
+
+    public static ServerHandle startServer(AppConfig appConfig, JwtConfig jwtConfig, DbConfig dbConfig) throws IOException {
+        OrcamentoRepository repository = criarRepositorio(dbConfig);
         ExecutorService httpExecutor = Executors.newFixedThreadPool(appConfig.httpThreads());
         ExecutorService workerExecutor = Executors.newFixedThreadPool(appConfig.workerThreads());
 
@@ -98,15 +105,7 @@ public class MotorFinanceiro {
         server.setExecutor(httpExecutor);
         server.start();
 
-        LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Servidor iniciado na porta " + appConfig.port() + ".");
-
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Encerrando servidor...");
-            server.stop(1);
-            httpExecutor.shutdown();
-            workerExecutor.shutdown();
-            repository.close();
-        }));
+        return new ServerHandle(server, httpExecutor, workerExecutor, repository);
     }
 
     private static OrcamentoRepository criarRepositorio(DbConfig config) {
@@ -115,6 +114,29 @@ public class MotorFinanceiro {
             return new InMemoryOrcamentoRepository();
         }
         return new JdbcOrcamentoRepository(config);
+    }
+
+    static class ServerHandle implements AutoCloseable {
+        private final HttpServer server;
+        private final ExecutorService httpExecutor;
+        private final ExecutorService workerExecutor;
+        private final OrcamentoRepository repository;
+
+        ServerHandle(HttpServer server, ExecutorService httpExecutor, ExecutorService workerExecutor, OrcamentoRepository repository) {
+            this.server = server;
+            this.httpExecutor = httpExecutor;
+            this.workerExecutor = workerExecutor;
+            this.repository = repository;
+        }
+
+        @Override
+        public void close() {
+            LoggerSaaS.log("INFO", "[MOTOR FINANCEIRO] Encerrando servidor...");
+            server.stop(1);
+            httpExecutor.shutdown();
+            workerExecutor.shutdown();
+            repository.close();
+        }
     }
 
     static class HealthCheckHandler implements HttpHandler {

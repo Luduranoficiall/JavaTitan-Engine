@@ -1,6 +1,6 @@
-# JavaTitan Engine
+# JavaTitan Engine (TCC)
 
-Motor financeiro em Java puro, com API HTTP, processamento assincrono, validacao JWT HS256 e persistencia JDBC opcional. O projeto prioriza clareza arquitetural, precisao com `BigDecimal` e padroes modernos (records, streams, strategy e async com `CompletableFuture`).
+Motor financeiro em **Java puro**, com API HTTP, processamento assincrono, validacao JWT HS256 e persistencia JDBC opcional. O projeto foi estruturado para TCC, com foco em arquitetura limpa, rastreabilidade e demonstracao tecnica.
 
 ## Destaques tecnicos
 - API HTTP nativa (`HttpServer`) com handlers isolados.
@@ -9,6 +9,7 @@ Motor financeiro em Java puro, com API HTTP, processamento assincrono, validacao
 - Dominio forte via `Plano` (enum com taxas e validacao centralizada).
 - Persistencia JDBC configuravel por variaveis de ambiente.
 - Respostas padronizadas de erro com `requestId` e timestamp.
+- Execucao e testes 100% em Java (sem scripts shell).
 
 ## Arquitetura (alto nivel)
 
@@ -54,7 +55,7 @@ Calcula proposta financeira.
 **Resposta 200**
 ```json
 {
-  "idProposta": "5c8f0a80-1e5d-4b9a-a1f9-83e0dd2e8a1e",
+  "idProposta": "5c8f0a80-1e5d-4b9a-a1f9-83e0dd2e8a1c1",
   "valorLiquido": 850.00,
   "taxaAplicada": 150.00,
   "status": "PROCESSADO_ASYNC"
@@ -100,14 +101,6 @@ Health check.
 - `JAVATITAN_JWT_TTL` (segundos, default: `3600`)
 - `JAVATITAN_JWT_PLAN` (default: `PRO`)
 
-### Gerar token valido (Java puro)
-```bash
-export JAVATITAN_JWT_SECRET="super-secret"
-
-javac -d out $(find src/main/java -name "*.java")
-java -cp out com.javatitan.engine.TokenGenerator
-```
-
 ## Persistencia JDBC
 A persistencia e habilitada quando `JAVATITAN_DB_URL` esta definida. Caso contrario, o motor usa memoria.
 
@@ -131,67 +124,40 @@ orcamentos (
 )
 ```
 
-### Exemplo com H2 (local)
-1) Baixe o driver (exemplo):
+## Execucao (Java puro)
+Compilar:
 ```bash
-mkdir -p lib
-curl -L -o lib/h2.jar https://repo1.maven.org/maven2/com/h2database/h2/2.2.224/h2-2.2.224.jar
-```
-
-2) Compile e execute:
-```bash
-export JAVATITAN_DB_URL="jdbc:h2:./data/javatitan"
-export JAVATITAN_DB_DRIVER="org.h2.Driver"
-export JAVATITAN_JWT_SECRET="super-secret"
-
-javac -cp lib/h2.jar -d out $(find src/main/java -name "*.java")
-java -cp out:lib/h2.jar com.javatitan.engine.MotorFinanceiro
-```
-
-## Build e execucao (javac)
-```bash
-export JAVATITAN_JWT_SECRET="super-secret"
-
 javac -d out $(find src/main/java -name "*.java")
+```
+
+### Subir o servidor (padrao)
+```bash
+export JAVATITAN_JWT_SECRET="super-secret"
 java -cp out com.javatitan.engine.MotorFinanceiro
 ```
 
-## Script rapido (build + run + teste)
+### Gerar token (Java puro)
 ```bash
-./run.sh
+java -cp out com.javatitan.engine.TokenGenerator
 ```
 
-## Script JDBC (H2 ou PostgreSQL)
-**H2 (default):**
-```bash
-./run-db.sh
-```
-
-**PostgreSQL:**
-```bash
-export DB_TYPE=postgres
-export JAVATITAN_DB_URL="jdbc:postgresql://localhost:5432/javatitan"
-export JAVATITAN_DB_USER="javatitan"
-export JAVATITAN_DB_PASS="javatitan"
-./run-db.sh
-```
-
-## Test client (Java puro)
+### Testar endpoints (Java puro)
 ```bash
 export JAVATITAN_JWT_TOKEN="<TOKEN_GERADO>"
 java -cp out com.javatitan.engine.TestClient
 ```
 
-## Testes rapidos
+### Runner TCC (start + test)
 ```bash
-curl -i http://localhost:8080/health
+export JAVATITAN_JWT_SECRET="super-secret"
+java -cp out com.javatitan.engine.TccRunner
 ```
 
+Com DB (JDBC):
 ```bash
-curl -i -X POST http://localhost:8080/api/calcular \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <TOKEN_GERADO>' \
-  -d '{"idCliente":"e7f6b1c6-9cb0-4c1a-9c76-2a9bf3b2a1c1","valorBruto":1000.00,"plano":"PRO"}'
+export JAVATITAN_DB_URL="jdbc:h2:./data/javatitan"
+export JAVATITAN_DB_DRIVER="org.h2.Driver"
+java -cp out:lib/h2.jar com.javatitan.engine.TccRunner
 ```
 
 ## Demonstracoes
@@ -210,8 +176,6 @@ java -cp out com.javatitan.engine.ProcessadorLote
 JavaTitan-Engine/
   README.md
   .gitignore
-  run.sh
-  run-db.sh
   src/main/java/com/javatitan/engine/
     AppConfig.java
     DbConfig.java
@@ -227,7 +191,9 @@ JavaTitan-Engine/
     OrcamentoRepository.java
     Plano.java
     ProcessadorLote.java
+    TestClient.java
     TokenGenerator.java
+    TccRunner.java
     ValidadorSeguranca.java
 ```
 
