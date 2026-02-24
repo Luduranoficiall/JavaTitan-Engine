@@ -26,27 +26,7 @@ for _ in {1..20}; do
   sleep 0.3
 done
 
-TOKEN=$(python3 - <<'PY'
-import base64, json, hmac, hashlib, time, os
-secret = os.getenv("JAVATITAN_JWT_SECRET", "super-secret")
-header = {"alg":"HS256","typ":"JWT"}
-payload = {
-    "user":"demo",
-    "plan":"PRO",
-    "exp": int(time.time()) + 3600
-}
-
-def b64url(data):
-    raw = json.dumps(data, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-h = b64url(header)
-p = b64url(payload)
-msg = f"{h}.{p}".encode()
-sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), msg, hashlib.sha256).digest()).decode().rstrip("=")
-print(f"{h}.{p}.{sig}")
-PY
-)
+TOKEN=$(java -cp out com.javatitan.engine.TokenGenerator)
 
 echo "TOKEN=${TOKEN}"
 

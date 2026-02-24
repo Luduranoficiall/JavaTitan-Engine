@@ -1,6 +1,6 @@
 # JavaTitan Engine
 
-Motor financeiro em Java com API HTTP, processamento assincrono, validacao JWT HS256 e persistencia JDBC opcional. O projeto prioriza clareza arquitetural, precisao com `BigDecimal` e padroes modernos (records, streams, strategy e async com `CompletableFuture`).
+Motor financeiro em Java puro, com API HTTP, processamento assincrono, validacao JWT HS256 e persistencia JDBC opcional. O projeto prioriza clareza arquitetural, precisao com `BigDecimal` e padroes modernos (records, streams, strategy e async com `CompletableFuture`).
 
 ## Destaques tecnicos
 - API HTTP nativa (`HttpServer`) com handlers isolados.
@@ -97,29 +97,15 @@ Health check.
 - `JAVATITAN_JWT_ISS` (opcional)
 - `JAVATITAN_JWT_AUD` (opcional)
 - `JAVATITAN_JWT_CLOCK_SKEW` (segundos, default: `30`)
+- `JAVATITAN_JWT_TTL` (segundos, default: `3600`)
+- `JAVATITAN_JWT_PLAN` (default: `PRO`)
 
-### Gerar token valido (exemplo Python)
+### Gerar token valido (Java puro)
 ```bash
-python3 - <<'PY'
-import base64, json, hmac, hashlib, time
-secret = "super-secret"
-header = {"alg":"HS256","typ":"JWT"}
-payload = {
-    "user":"demo",
-    "plan":"PRO",
-    "exp": int(time.time()) + 3600
-}
+export JAVATITAN_JWT_SECRET="super-secret"
 
-def b64url(data):
-    raw = json.dumps(data, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-h = b64url(header)
-p = b64url(payload)
-msg = f"{h}.{p}".encode()
-sig = base64.urlsafe_b64encode(hmac.new(secret.encode(), msg, hashlib.sha256).digest()).decode().rstrip("=")
-print(f"{h}.{p}.{sig}")
-PY
+javac -d out $(find src/main/java -name "*.java")
+java -cp out com.javatitan.engine.TokenGenerator
 ```
 
 ## Persistencia JDBC
@@ -160,13 +146,6 @@ export JAVATITAN_JWT_SECRET="super-secret"
 
 javac -cp lib/h2.jar -d out $(find src/main/java -name "*.java")
 java -cp out:lib/h2.jar com.javatitan.engine.MotorFinanceiro
-```
-
-## Build e execucao (Maven)
-```bash
-mvn -q -DskipTests package
-export JAVATITAN_JWT_SECRET="super-secret"
-java -jar target/javatitan-engine-1.0.0.jar
 ```
 
 ## Build e execucao (javac)
@@ -223,9 +202,10 @@ java -cp out com.javatitan.engine.ProcessadorLote
 ## Estrutura do projeto
 ```
 JavaTitan-Engine/
-  pom.xml
   README.md
   .gitignore
+  run.sh
+  run-db.sh
   src/main/java/com/javatitan/engine/
     AppConfig.java
     DbConfig.java
@@ -241,6 +221,7 @@ JavaTitan-Engine/
     OrcamentoRepository.java
     Plano.java
     ProcessadorLote.java
+    TokenGenerator.java
     ValidadorSeguranca.java
 ```
 
