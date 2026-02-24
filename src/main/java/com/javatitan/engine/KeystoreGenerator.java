@@ -1,38 +1,44 @@
 package com.javatitan.engine;
 
-import sun.security.tools.keytool.CertAndKeyGen;
-import sun.security.x509.X500Name;
-
-import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.cert.Certificate;
-import java.security.cert.X509Certificate;
-import java.util.Date;
+import java.util.ArrayList;
+import java.util.List;
 
 public class KeystoreGenerator {
     public static void main(String[] args) throws Exception {
         Options options = Options.parse(args);
-
         Files.createDirectories(options.outDir());
-
-        KeyMaterial server = generate(options.serverDn(), options.keySize(), options.days());
-        KeyMaterial client = options.mtls() ? generate(options.clientDn(), options.keySize(), options.days()) : null;
 
         String extension = options.type().equalsIgnoreCase("PKCS12") ? ".p12" : ".jks";
         Path serverKeystorePath = options.outDir().resolve("server-keystore" + extension);
         Path serverTruststorePath = options.outDir().resolve("server-truststore" + extension);
         Path clientKeystorePath = options.outDir().resolve("client-keystore" + extension);
         Path clientTruststorePath = options.outDir().resolve("client-truststore" + extension);
+        Path serverCertPath = options.outDir().resolve("server-cert.pem");
+        Path clientCertPath = options.outDir().resolve("client-cert.pem");
 
-        createKeyStore(serverKeystorePath, options.type(), options.password(), options.serverAlias(), server.privateKey(), server.certificate());
-        createTrustStore(serverTruststorePath, options.type(), options.password(), options.serverAlias(), server.certificate(), options.mtls() ? options.clientAlias() : null, options.mtls() ? client.certificate() : null);
+        deleteIfExists(serverKeystorePath);
+        deleteIfExists(serverTruststorePath);
+        deleteIfExists(clientKeystorePath);
+        deleteIfExists(clientTruststorePath);
+        deleteIfExists(serverCertPath);
+        deleteIfExists(clientCertPath);
 
-        createTrustStore(clientTruststorePath, options.type(), options.password(), options.serverAlias(), server.certificate(), null, null);
+        generateKeypair(serverKeystorePath, options.type(), options.password(), options.serverAlias(), options.keySize(), options.days(), options.serverDn(), options.san());
+        exportCert(serverKeystorePath, options.type(), options.password(), options.serverAlias(), serverCertPath);
+
+        importCert(serverTruststorePath, options.type(), options.password(), options.serverAlias(), serverCertPath);
+        importCert(clientTruststorePath, options.type(), options.password(), options.serverAlias(), serverCertPath);
+
         if (options.mtls()) {
-            createKeyStore(clientKeystorePath, options.type(), options.password(), options.clientAlias(), client.privateKey(), client.certificate());
+            generateKeypair(clientKeystorePath, options.type(), options.password(), options.clientAlias(), options.keySize(), options.days(), options.clientDn(), options.san());
+            exportCert(clientKeystorePath, options.type(), options.password(), options.clientAlias(), clientCertPath);
+            importCert(serverTruststorePath, options.type(), options.password(), options.clientAlias(), clientCertPath);
         }
 
         System.out.println("Keystores gerados em: " + options.outDir().toAbsolutePath());
@@ -44,38 +50,110 @@ public class KeystoreGenerator {
         }
     }
 
-    private static KeyMaterial generate(String dn, int keySize, int days) throws Exception {
-        CertAndKeyGen keyGen = new CertAndKeyGen("RSA", "SHA256withRSA", null);
-        keyGen.generate(keySize);
-        PrivateKey privateKey = keyGen.getPrivateKey();
-        X500Name x500Name = new X500Name(dn);
-        long validitySeconds = Math.max(1L, (long) days * 24 * 3600);
-        X509Certificate cert = keyGen.getSelfCertificate(x500Name, new Date(), validitySeconds);
-        return new KeyMaterial(privateKey, cert);
+    private static void generateKeypair(Path keystore, String type, char[] password, String alias, int keySize, int days, String dn, String san) throws Exception {
+        List<String> args = new ArrayList<>();
+        args.add("-genkeypair");
+        args.add("-alias");
+        args.add(alias);
+        args.add("-keyalg");
+        args.add("RSA");
+        args.add("-keysize");
+        args.add(String.valueOf(keySize));
+        args.add("-sigalg");
+        args.add("SHA256withRSA");
+        args.add("-validity");
+        args.add(String.valueOf(days));
+        args.add("-dname");
+        args.add(dn);
+        args.add("-keystore");
+        args.add(keystore.toString());
+        args.add("-storetype");
+        args.add(type);
+        args.add("-storepass");
+        args.add(new String(password));
+        args.add("-keypass");
+        args.add(new String(password));
+        args.add("-noprompt");
+        if (san != null && !san.isBlank()) {
+            args.add("-ext");
+            args.add("SAN=" + san);
+        }
+
+        execKeytool(args);
     }
 
-    private static void createKeyStore(Path path, String type, char[] password, String alias, PrivateKey key, Certificate cert) throws Exception {
-        KeyStore ks = KeyStore.getInstance(type);
-        ks.load(null, null);
-        ks.setKeyEntry(alias, key, password, new Certificate[] { cert });
-        try (FileOutputStream fos = new FileOutputStream(path.toFile())) {
-            ks.store(fos, password);
+    private static void exportCert(Path keystore, String type, char[] password, String alias, Path certFile) throws Exception {
+        List<String> args = List.of(
+            "-exportcert",
+            "-alias", alias,
+            "-keystore", keystore.toString(),
+            "-storetype", type,
+            "-storepass", new String(password),
+            "-rfc",
+            "-file", certFile.toString()
+        );
+        execKeytool(args);
+    }
+
+    private static void importCert(Path truststore, String type, char[] password, String alias, Path certFile) throws Exception {
+        List<String> args = List.of(
+            "-importcert",
+            "-noprompt",
+            "-alias", alias,
+            "-file", certFile.toString(),
+            "-keystore", truststore.toString(),
+            "-storetype", type,
+            "-storepass", new String(password)
+        );
+        execKeytool(args);
+    }
+
+    private static void execKeytool(List<String> args) throws Exception {
+        List<String> command = new ArrayList<>();
+        command.add(findKeytool());
+        command.addAll(args);
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        String output = readAll(process.getInputStream());
+        int exit = process.waitFor();
+        if (exit != 0) {
+            throw new IllegalStateException("keytool falhou: " + output);
         }
     }
 
-    private static void createTrustStore(Path path, String type, char[] password, String alias, Certificate cert, String extraAlias, Certificate extraCert) throws Exception {
-        KeyStore ks = KeyStore.getInstance(type);
-        ks.load(null, null);
-        ks.setCertificateEntry(alias, cert);
-        if (extraAlias != null && extraCert != null) {
-            ks.setCertificateEntry(extraAlias, extraCert);
+    private static String findKeytool() {
+        String javaHome = System.getProperty("java.home");
+        if (javaHome != null) {
+            Path candidate = Path.of(javaHome, "bin", isWindows() ? "keytool.exe" : "keytool");
+            if (Files.exists(candidate)) {
+                return candidate.toString();
+            }
         }
-        try (FileOutputStream fos = new FileOutputStream(path.toFile())) {
-            ks.store(fos, password);
+        return "keytool";
+    }
+
+    private static boolean isWindows() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        return os.contains("win");
+    }
+
+    private static String readAll(InputStream input) throws Exception {
+        try (InputStream in = input; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                out.write(buffer, 0, read);
+            }
+            return out.toString(StandardCharsets.UTF_8);
         }
     }
 
-    private record KeyMaterial(PrivateKey privateKey, X509Certificate certificate) {}
+    private static void deleteIfExists(Path path) throws Exception {
+        Files.deleteIfExists(path);
+    }
 
     private record Options(
         Path outDir,
@@ -87,7 +165,8 @@ public class KeystoreGenerator {
         String serverAlias,
         String clientAlias,
         String serverDn,
-        String clientDn
+        String clientDn,
+        String san
     ) {
         static Options parse(String[] args) {
             Path outDir = Path.of("security");
@@ -100,6 +179,7 @@ public class KeystoreGenerator {
             String clientAlias = "javatitan-client";
             String serverDn = "CN=JavaTitan-Server, OU=TCC, O=JavaTitan, L=Local, ST=BR, C=BR";
             String clientDn = "CN=JavaTitan-Client, OU=TCC, O=JavaTitan, L=Local, ST=BR, C=BR";
+            String san = envOrDefault("JAVATITAN_TLS_SAN", "DNS:localhost,IP:127.0.0.1");
 
             for (String arg : args) {
                 if (arg.startsWith("--out-dir=")) {
@@ -122,12 +202,16 @@ public class KeystoreGenerator {
                     serverDn = arg.substring("--server-dn=".length());
                 } else if (arg.startsWith("--client-dn=")) {
                     clientDn = arg.substring("--client-dn=".length());
+                } else if (arg.startsWith("--san=")) {
+                    san = arg.substring("--san=".length());
+                } else if (arg.equals("--no-san")) {
+                    san = null;
                 } else if (arg.equals("--help")) {
                     printHelpAndExit();
                 }
             }
 
-            return new Options(outDir, type, days, keySize, mtls, password.toCharArray(), serverAlias, clientAlias, serverDn, clientDn);
+            return new Options(outDir, type, days, keySize, mtls, password.toCharArray(), serverAlias, clientAlias, serverDn, clientDn, san);
         }
 
         private static int parseInt(String name, String value) {
@@ -139,7 +223,7 @@ public class KeystoreGenerator {
         }
 
         private static void printHelpAndExit() {
-            System.out.println("KeystoreGenerator (Java puro)");
+            System.out.println("KeystoreGenerator (Java, usando keytool)");
             System.out.println("Opcoes:");
             System.out.println("  --out-dir=DIR        Diretorio de saida (default security)");
             System.out.println("  --type=JKS|PKCS12    Tipo do keystore (default JKS)");
@@ -149,8 +233,10 @@ public class KeystoreGenerator {
             System.out.println("  --password=PASS      Senha dos stores (default changeit)");
             System.out.println("  --server-alias=ALIAS Alias do server (default javatitan-server)");
             System.out.println("  --client-alias=ALIAS Alias do client (default javatitan-client)");
-            System.out.println("  --server-dn=DN       DN do server (default CN=JavaTitan-Server, OU=TCC, O=JavaTitan, L=Local, ST=BR, C=BR)");
-            System.out.println("  --client-dn=DN       DN do client (default CN=JavaTitan-Client, OU=TCC, O=JavaTitan, L=Local, ST=BR, C=BR)");
+            System.out.println("  --server-dn=DN       DN do server");
+            System.out.println("  --client-dn=DN       DN do client");
+            System.out.println("  --san=SAN            SubjectAltName (default DNS:localhost,IP:127.0.0.1)");
+            System.out.println("  --no-san             Desabilita SAN");
             System.exit(0);
         }
 
