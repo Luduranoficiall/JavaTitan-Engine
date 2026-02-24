@@ -182,6 +182,21 @@ java -cp out com.javatitan.engine.MotorFinanceiro
 ./run.sh
 ```
 
+## Script JDBC (H2 ou PostgreSQL)
+**H2 (default):**
+```bash
+./run-db.sh
+```
+
+**PostgreSQL:**
+```bash
+export DB_TYPE=postgres
+export JAVATITAN_DB_URL="jdbc:postgresql://localhost:5432/javatitan"
+export JAVATITAN_DB_USER="javatitan"
+export JAVATITAN_DB_PASS="javatitan"
+./run-db.sh
+```
+
 ## Testes rapidos
 ```bash
 curl -i http://localhost:8080/health
