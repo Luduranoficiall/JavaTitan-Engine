@@ -176,6 +176,12 @@ export JAVATITAN_DB_PASS="javatitan"
 ./run-db.sh
 ```
 
+## Test client (Java puro)
+```bash
+export JAVATITAN_JWT_TOKEN="<TOKEN_GERADO>"
+java -cp out com.javatitan.engine.TestClient
+```
+
 ## Testes rapidos
 ```bash
 curl -i http://localhost:8080/health

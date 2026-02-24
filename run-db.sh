@@ -55,28 +55,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if command -v curl >/dev/null 2>&1; then
-  for _ in {1..20}; do
-    if curl -fsS "http://localhost:8080/health" >/dev/null; then
-      break
-    fi
-    sleep 0.3
-  done
+sleep 0.6
 
-  TOKEN=$(java -cp "out:$JDBC_JAR" com.javatitan.engine.TokenGenerator)
+TOKEN=$(java -cp "out:$JDBC_JAR" com.javatitan.engine.TokenGenerator)
+export JAVATITAN_JWT_TOKEN="$TOKEN"
+export JAVATITAN_BASE_URL="http://localhost:8080"
 
-  echo "TOKEN=${TOKEN}"
-  echo "---- /health ----"
-  curl -i "http://localhost:8080/health"
-  echo
-  echo "---- /api/calcular ----"
-  curl -i -X POST "http://localhost:8080/api/calcular" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -d '{"idCliente":"e7f6b1c6-9cb0-4c1a-9c76-2a9bf3b2a1c1","valorBruto":1000.00,"plano":"PRO"}'
-else
-  echo "curl nao encontrado. Servidor iniciado em http://localhost:8080" >&2
-fi
+echo "TOKEN=${TOKEN}"
+java -cp "out:$JDBC_JAR" com.javatitan.engine.TestClient
 
 if [[ "$KEEP_RUNNING" == "1" ]]; then
   echo "Servidor em execucao. Ctrl+C para encerrar." >&2
